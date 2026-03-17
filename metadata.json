@@ -1,0 +1,5 @@
+{
+  "name": "TikTok Profile Extractor",
+  "description": "Extract bio, stats, and profile picture from a TikTok profile link.",
+  "requestFramePermissions": []
+}

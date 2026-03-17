@@ -1,0 +1,166 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ============ CSS Variables for Theme ============ */
+:root {
+  /* Dark theme (default) */
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #0d0d14;
+  --bg-card: rgba(255, 255, 255, 0.03);
+  --bg-card-hover: rgba(255, 255, 255, 0.06);
+  --bg-input: rgba(255, 255, 255, 0.05);
+  --bg-hover: rgba(255, 255, 255, 0.04);
+  --border-primary: rgba(255, 255, 255, 0.06);
+  --border-secondary: rgba(255, 255, 255, 0.1);
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-tertiary: #64748b;
+  --text-muted: #475569;
+  --accent: #8b5cf6;
+  --accent-bg: rgba(139, 92, 246, 0.15);
+  --accent-border: rgba(139, 92, 246, 0.2);
+  --scrollbar-track: rgba(255, 255, 255, 0.02);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.08);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.15);
+  --select-bg: #1e1e2e;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Light theme */
+.theme-light {
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-card: rgba(255, 255, 255, 0.9);
+  --bg-card-hover: rgba(255, 255, 255, 1);
+  --bg-input: rgba(0, 0, 0, 0.04);
+  --bg-hover: rgba(0, 0, 0, 0.04);
+  --border-primary: rgba(0, 0, 0, 0.08);
+  --border-secondary: rgba(0, 0, 0, 0.12);
+  --text-primary: #1e293b;
+  --text-secondary: #475569;
+  --text-tertiary: #64748b;
+  --text-muted: #94a3b8;
+  --accent: #7c3aed;
+  --accent-bg: rgba(124, 58, 237, 0.08);
+  --accent-border: rgba(124, 58, 237, 0.2);
+  --scrollbar-track: rgba(0, 0, 0, 0.03);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.12);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.2);
+  --select-bg: #ffffff;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* Glass morphism card */
+.glass-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  box-shadow: var(--shadow-card);
+}
+
+.glass-card:hover {
+  border-color: var(--border-secondary);
+}
+
+/* Light theme overrides for components */
+.theme-light .glass-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Dark select options */
+select option {
+  background: var(--select-bg);
+  color: var(--text-primary);
+}
+
+/* Checkbox styling */
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+/* Animations — only where needed, no global * selector */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+  animation: fadeIn 0.2s ease-out forwards;
+}
+
+/* ============ Light theme utility overrides ============ */
+
+/* Sidebar */
+.theme-light .sidebar {
+  background: var(--bg-secondary);
+  border-color: var(--border-primary);
+}
+
+/* Top bar */
+.theme-light .topbar {
+  background: rgba(248, 250, 252, 0.8);
+  border-color: var(--border-primary);
+}
+
+/* Input fields in light theme */
+.theme-light input[type="text"],
+.theme-light textarea,
+.theme-light select {
+  background: var(--bg-input);
+  border-color: var(--border-secondary);
+  color: var(--text-primary);
+}
+
+.theme-light input[type="text"]::placeholder,
+.theme-light textarea::placeholder {
+  color: var(--text-muted);
+}
+
+/* Table in light theme */
+.theme-light table thead {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.theme-light table tbody tr:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* Stat cards in light theme */
+.theme-light .stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+}
+
+/* Dropdown menus in light theme */
+.theme-light .dropdown-menu {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-secondary);
+}
