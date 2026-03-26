@@ -65,6 +65,7 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme }: Univ
   
   // We use localStorage overriding process.env
   const GEMINI_API_KEY = localStorage.getItem('scout_hub_gemini_key') || (import.meta as any).env.VITE_GEMINI_API_KEY;
+  const RAPIDAPI_KEY = localStorage.getItem('scout_hub_rapidapi_key') || '';
 
   const isDark = theme === 'dark';
   const cardBg = isDark ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-white border-slate-200';
@@ -224,14 +225,39 @@ Bio: "${data.bio}"`,
       } catch (e) { /* AI fail is non-blocking */ }
     }
 
-    // Use direct engagement metrics parsed from TikTok HTML
-    let averageView = data.averageView || 0;
-    let averageEngagement = data.averageEngagement || 0;
-    let totalSaves = data.totalSaves || 0;
+    // Fetch video engagement metrics via RapidAPI (non-blocking)
+    let averageView = 0, averageEngagement = 0, totalSaves = 0;
     let videoTotalLikes = data.totalLikes || 0;
     let videoTotalComments = data.totalComments || 0;
     let videoTotalShares = data.totalShares || 0;
     let videoCount = data.videoCount || 0;
+    
+    if (data.channelId) {
+      try {
+        const videoRes = await fetch('/api/tiktok-videos', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-rapidapi-key': RAPIDAPI_KEY 
+          },
+          body: JSON.stringify({ username: data.channelId }),
+        });
+        if (videoRes.ok) {
+          const videoData = await videoRes.json();
+          averageView = videoData.averageView || 0;
+          averageEngagement = videoData.averageEngagement || 0;
+          videoCount = videoData.videoCount || videoCount;
+          if (videoData.totals) {
+            videoTotalLikes = videoData.totals.likes || videoTotalLikes;
+            videoTotalComments = videoData.totals.comments || videoTotalComments;
+            videoTotalShares = videoData.totals.shares || videoTotalShares;
+            totalSaves = videoData.totals.saves || 0;
+          }
+        }
+      } catch (e) {
+        console.warn('Video engagement fetch failed (non-blocking):', e);
+      }
+    }
 
     return {
       nickname: data.nickname,

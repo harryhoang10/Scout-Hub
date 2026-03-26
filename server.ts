@@ -308,7 +308,102 @@ app.use(express.json({ limit: '10mb' }));
     }
   });
 
+  // ============ TikTok Video Engagement (RapidAPI) ============
+  app.post('/api/tiktok-videos', async (req, res) => {
+    try {
+      const { username } = req.body;
+      if (!username) {
+        return res.status(400).json({ error: 'Username is required' });
+      }
 
+      const RAPIDAPI_KEY = (req.headers['x-rapidapi-key'] as string) || process.env.RAPIDAPI_KEY;
+      if (!RAPIDAPI_KEY || RAPIDAPI_KEY === 'YOUR_RAPIDAPI_KEY') {
+        return res.status(400).json({ error: 'RapidAPI key chưa được cấu hình. Vui lòng thiết lập trong Cài đặt hoặc file .env' });
+      }
+
+      // Call RapidAPI TikTok Scraper - get user posts
+      const apiUrl = `https://tiktok-scraper7.p.rapidapi.com/user/posts?unique_id=${encodeURIComponent(username)}&count=15`;
+      
+      const response = await fetch(apiUrl, {
+        method: 'GET',
+        headers: {
+          'x-rapidapi-key': RAPIDAPI_KEY,
+          'x-rapidapi-host': 'tiktok-scraper7.p.rapidapi.com',
+        },
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error('RapidAPI error:', response.status, errText);
+        throw new Error(`RapidAPI lỗi (${response.status})`);
+      }
+
+      const data = await response.json();
+      
+      // Extract video items from response
+      let videos: any[] = [];
+      if (data?.data?.videos) {
+        videos = data.data.videos;
+      } else if (Array.isArray(data?.data)) {
+        videos = data.data;
+      } else if (data?.videos) {
+        videos = data.videos;
+      }
+
+      if (videos.length === 0) {
+        return res.json({
+          averageView: 0,
+          averageEngagement: 0,
+          videos: [],
+          videoCount: 0,
+        });
+      }
+
+      // Skip first 3 videos (most recent), take next 10
+      const skipCount = Math.min(3, videos.length);
+      const targetVideos = videos.length > 3 
+        ? videos.slice(skipCount, skipCount + 10)
+        : videos.slice(0, 10); // If <= 3 videos total, just use what we have
+
+      const videoStats = targetVideos.map((v: any) => {
+        const stats = v.stats || v;
+        return {
+          views: stats.play_count || stats.playCount || v.play_count || 0,
+          likes: stats.digg_count || stats.diggCount || v.digg_count || 0,
+          comments: stats.comment_count || stats.commentCount || v.comment_count || 0,
+          shares: stats.share_count || stats.shareCount || v.share_count || 0,
+          saves: stats.collect_count || stats.collectCount || v.collect_count || 0,
+          description: v.title || v.desc || v.description || '',
+        };
+      });
+
+      const videoCount = videoStats.length;
+      const totals = videoStats.reduce((acc: any, v: any) => ({
+        views: acc.views + v.views,
+        likes: acc.likes + v.likes,
+        comments: acc.comments + v.comments,
+        shares: acc.shares + v.shares,
+        saves: acc.saves + v.saves,
+      }), { views: 0, likes: 0, comments: 0, shares: 0, saves: 0 });
+
+      const averageView = videoCount > 0 ? Math.round(totals.views / videoCount) : 0;
+      const totalEngagementPerVideo = videoCount > 0 
+        ? Math.round((totals.likes + totals.comments + totals.shares + totals.saves) / videoCount) 
+        : 0;
+
+      return res.json({
+        averageView,
+        averageEngagement: totalEngagementPerVideo,
+        videos: videoStats,
+        videoCount,
+        totals,
+      });
+
+    } catch (error: any) {
+      console.error('TikTok video fetch error:', error.message);
+      return res.status(500).json({ error: error.message || 'Lỗi khi lấy dữ liệu video' });
+    }
+  });
 
   // ============ Facebook Extract API ============
   app.post('/api/extract-facebook', async (req, res) => {
