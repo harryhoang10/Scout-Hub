@@ -63,8 +63,9 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme }: Univ
   const MAX_LINKS = 20;
   const PARALLEL_COUNT = 3; // Restored to 3, AI prompt optimized for resilience
   
-  // We use process.env to avoid vite TS errors if env types aren't fully configured
-  const GEMINI_API_KEY = (import.meta as any).env.VITE_GEMINI_API_KEY;
+  // We use localStorage overriding process.env
+  const GEMINI_API_KEY = localStorage.getItem('scout_hub_gemini_key') || (import.meta as any).env.VITE_GEMINI_API_KEY;
+  const RAPIDAPI_KEY = localStorage.getItem('scout_hub_rapidapi_key') || '';
 
   const isDark = theme === 'dark';
   const cardBg = isDark ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-white border-slate-200';
@@ -195,28 +196,32 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme }: Univ
     }
     const data = await response.json();
     
-    let aiPhone = '', aiEmail = '', aiBioLink = '';
+    let aiPhone = '', aiEmail = '', aiBioLink = '', aiAnalysis = '';
     if (GEMINI_API_KEY && data.bio && data.bio.trim().length > 5) {
       try {
         const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
         const aiResponse = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: `Trích xuất thông tin liên hệ từ tiểu sử (bio) mạng xã hội này. Chú ý các chiêu trò lách luật viết chữ thay số, chèn dấu chấm/cách giữa các số, dùng icon, hoặc ghi "Zalo", "Za l0", "zl", "búc kinh".
-TRẢ LỜI NGẮN GỌN THEO ĐÚNG ĐỊNH DẠNG. Chỉ trả lời thông tin, không thêm giải thích. Nếu không tìm thấy, MỚI ghi 'N/A'.
-Phone: [SĐT nếu có (xoá khoảng trắng/dấu chấm), nếu không có ghi N/A]
+          model: "gemini-3-flash-preview",
+          contents: `Trích xuất thông tin liên hệ và phân tích nhân khẩu học từ tiểu sử mạng xã hội này. Chú ý các chiêu trò lách luật viết chữ thay số, chèn dấu chấm/cách giữa các số.
+TRẢ LỜI NGẮN GỌN DƯỚI DẠNG CHUỖI VĂN BẢN KÈM TIỀN TỐ. Chỉ trả lời thông tin, không giải thích.
+Phone: [SĐT nếu có (xoá khoảng trắng/dấu chấm), nếu không ghi N/A]
 Email: [Email nếu có, nếu không ghi N/A]
-BioLink: [Các link website/shopee/contact ngoài nếu có, nếu không ghi N/A]
+BioLink: [Các link website ngoài nếu có, nếu không ghi N/A]
+AI_Analysis: [Đoán tệp người xem (Độ tuổi, giới tính) và phong cách kênh (1-2 câu ngắn gọn). Nếu không đoán được ghi N/A]
 
+Tên kênh: "${data.nickname}"
 Bio: "${data.bio}"`,
         });
         const text = aiResponse?.text || '';
         const phoneMatch = text.match(/Phone:\s*([^\n]+)/i);
         const emailMatch = text.match(/Email:\s*([^\n]+)/i);
         const bioLinkMatch = text.match(/BioLink:\s*([^\n]+)/i);
+        const analysisMatch = text.match(/AI_Analysis:\s*([\s\S]+)$/i);
         
         if (phoneMatch && phoneMatch[1].trim() !== 'N/A') aiPhone = phoneMatch[1].trim();
         if (emailMatch && emailMatch[1].trim() !== 'N/A') aiEmail = emailMatch[1].trim();
         if (bioLinkMatch && bioLinkMatch[1].trim() !== 'N/A') aiBioLink = bioLinkMatch[1].trim();
+        if (analysisMatch && analysisMatch[1].trim() !== 'N/A') aiAnalysis = analysisMatch[1].trim();
       } catch (e) { /* AI fail is non-blocking */ }
     }
 
@@ -231,7 +236,10 @@ Bio: "${data.bio}"`,
       try {
         const videoRes = await fetch('/api/tiktok-videos', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-rapidapi-key': RAPIDAPI_KEY 
+          },
           body: JSON.stringify({ username: data.channelId }),
         });
         if (videoRes.ok) {
@@ -270,6 +278,7 @@ Bio: "${data.bio}"`,
       totalShares: videoTotalShares,
       totalSaves,
       videoCount,
+      aiAnalysis,
     };
   };
 
@@ -286,19 +295,20 @@ Bio: "${data.bio}"`,
     const data = await response.json();
 
     // AI extraction for phone, email, bio link
-    let aiPhone = '', aiEmail = '', aiBioLink = '';
+    let aiPhone = '', aiEmail = '', aiBioLink = '', aiAnalysis = '';
     if (GEMINI_API_KEY && data.description && data.description.trim().length > 5) {
       try {
         const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
         const isGroup = url.toLowerCase().includes('/groups/');
         const aiResponse = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: `Trích xuất thông tin liên hệ từ mô tả Facebook này. Chú ý các chiêu trò lách luật viết chữ thay số, chèn dấu chấm/cách giữa các số, hoặc ghi "lh", "liên hệ", "booking".
-TRẢ LỜI NGẮN GỌN THEO ĐÚNG ĐỊNH DẠNG. Chỉ trả lời thông tin, không thêm giải thích. Nếu không tìm thấy, MỚI ghi 'N/A'.
-Phone: [SĐT nếu có (xoá khoảng trắng/dấu chấm), nếu không có ghi N/A]
-Email: [Email nếu có, nếu không ghi N/A]
-BioLink: [Các link website ngoài (không phải FB) nếu có, nếu không ghi N/A]
+          model: "gemini-3-flash-preview",
+          contents: `Trích xuất thông tin và phân tích nhân khẩu học từ mô tả Facebook này. Chú ý các chiêu trò lách luật.
+TRẢ LỜI NGẮN GỌN THEO ĐÚNG ĐỊNH DẠNG. Chỉ trả lời thông tin, không giải thích.
+Phone: [SĐT nếu có, không có ghi N/A]
+Email: [Email nếu có, không có ghi N/A]
+BioLink: [Các link website ngoài (không phải FB), không ghi N/A]
 ProfileType: [${isGroup ? 'Community' : 'Individual hoặc Community'}]
+AI_Analysis: [Đoán tệp người xem (độ tuổi, giới tính) và phong cách từ nội dung. Nếu không đoán được ghi N/A]
 
 Tên: "${data.nickname}"
 Mô tả: "${data.description}"`,
@@ -307,10 +317,12 @@ Mô tả: "${data.description}"`,
         const phoneMatch = text.match(/Phone:\s*([^\n]+)/i);
         const emailMatch = text.match(/Email:\s*([^\n]+)/i);
         const bioLinkMatch = text.match(/BioLink:\s*([^\n]+)/i);
+        const analysisMatch = text.match(/AI_Analysis:\s*([\s\S]+)$/i);
         
         if (phoneMatch && phoneMatch[1].trim() !== 'N/A') aiPhone = phoneMatch[1].trim();
         if (emailMatch && emailMatch[1].trim() !== 'N/A') aiEmail = emailMatch[1].trim();
         if (bioLinkMatch && bioLinkMatch[1].trim() !== 'N/A') aiBioLink = bioLinkMatch[1].trim();
+        if (analysisMatch && analysisMatch[1].trim() !== 'N/A') aiAnalysis = analysisMatch[1].trim();
       } catch (e) { /* AI fail is non-blocking */ }
     }
 
@@ -325,6 +337,7 @@ Mô tả: "${data.description}"`,
       bioLink: aiBioLink || 'N/A',
       platform: 'Facebook',
       profileType: url.toLowerCase().includes('/groups/') ? 'Community' : 'Individual',
+      aiAnalysis,
     };
   };
 
@@ -440,6 +453,7 @@ Mô tả: "${data.description}"`,
       'Link Bio': l.bioLink || '',
       'Link': l.url,
       'Bio': l.bio || '',
+      'AI Analysis': l.aiAnalysis || '',
     }));
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
@@ -562,7 +576,8 @@ Mô tả: "${data.description}"`,
                 <th className="px-3 py-3 font-medium w-32">Email</th>
                 <th className="px-3 py-3 font-medium w-24">Link Bio</th>
                 <th className="px-3 py-3 font-medium w-44">Link</th>
-                <th className="px-3 py-3 font-medium w-48">Bio</th>
+                <th className="px-3 py-3 font-medium w-40">Bio</th>
+                <th className="px-3 py-3 font-medium w-36">AI Phân tích</th>
                 <th className="px-3 py-3 font-medium w-12 text-center">Ảnh</th>
                 <th className="px-3 py-3 font-medium w-24 text-center">Trạng thái</th>
               </tr>
@@ -610,7 +625,8 @@ Mô tả: "${data.description}"`,
                       <LinkIcon className="h-3 w-3 shrink-0" /> {link.url.replace(/https?:\/\/(www\.)?/, '').substring(0, 35)}...
                     </a>
                   </td>
-                  <td className={`px-3 py-2.5 text-xs ${textS} truncate max-w-[12rem]`} title={link.bio}>{link.bio || '-'}</td>
+                  <td className={`px-3 py-2.5 text-xs ${textS} truncate max-w-[10rem]`} title={link.bio}>{link.bio || '-'}</td>
+                  <td className={`px-3 py-2.5 text-xs font-medium truncate max-w-[12rem] ${isDark ? 'text-purple-300' : 'text-purple-700'}`} title={link.aiAnalysis}>{link.aiAnalysis || '-'}</td>
                   <td className="px-3 py-2.5 text-center">
                     {link.profilePic ? (
                       <img src={link.profilePic} alt="" className="w-7 h-7 rounded-full object-cover mx-auto border border-white/10" referrerPolicy="no-referrer" />

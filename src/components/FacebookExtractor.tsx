@@ -103,6 +103,7 @@ export function FacebookExtractor({ onSaveToRestored }: FacebookExtractorProps) 
         let followers = result.followers || "N/A";
         let bio = result.description || "N/A";
         let profileType: 'Individual' | 'Community' | 'N/A' = 'N/A';
+        let aiAnalysis = "N/A";
 
         // Regex fallback for email
         const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
@@ -123,28 +124,18 @@ export function FacebookExtractor({ onSaveToRestored }: FacebookExtractorProps) 
         }
 
         try {
-          const apiKey = process.env.GEMINI_API_KEY;
+          const apiKey = localStorage.getItem('scout_hub_gemini_key') || process.env.GEMINI_API_KEY;
           if (apiKey && (result.description || result.title)) {
             const ai = new GoogleGenAI({ apiKey });
             const prompt = `
-Bạn là một chuyên gia trích xuất dữ liệu (Data Extractor).
-Hãy phân tích các thông tin meta từ một đường link Facebook sau đây và trích xuất ra các thông tin cần thiết.
-Đặc biệt lưu ý với Số điện thoại: Người dùng thường dùng icon, emoji (như 0️⃣9️⃣...), ghi chữ (không chín...), hoặc thêm dấu chấm/phẩy/khoảng trắng để lách luật. Hãy nhận diện và chuyển đổi chúng thành một chuỗi số điện thoại hợp lệ (ví dụ: 0912345678).
+Bạn là một chuyên gia trích xuất dữ liệu. Phân tích các thông tin từ link Facebook sau đây.
+Xin hãy nhận diện và chuyển đổi chiêu trò che dấu số điện thoại thành số điện thoại hợp lệ.
+Mục aiAnalysis: Dự đoán 1-2 câu ngắn gọn về tệp khán giả (Độ tuổi, giới tính) và phong cách nội dung từ title và description. Nếu không rõ ghi N/A.
 
 Title: """${result.title}"""
 Description: """${result.description}"""
 URL: """${row.url}"""
 Followers (đã trích xuất sơ bộ): """${result.followers || ''}"""
-
-Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
-{
-  "phone": "Số điện thoại đã được chuẩn hóa (chỉ chứa chữ số, ví dụ: 0912345678). Nếu không có, trả về rỗng",
-  "email": "Địa chỉ email (nếu có). Nếu không có, trả về rỗng",
-  "link": "Đường link website/bio (nếu có). Nếu không có, trả về rỗng",
-  "followers": "Số lượng người theo dõi (Followers), lượt thích (Likes) hoặc thành viên (Members) dưới dạng số hoặc chữ (VD: 1.2M, 500K, 1200). Hãy tìm kỹ trong Description các từ như 'members', 'thành viên', 'người theo dõi', 'followers', 'likes', 'lượt thích'. Nếu không thấy, ưu tiên dùng 'Followers (đã trích xuất sơ bộ)' được cung cấp ở trên. Nếu vẫn không có, trả về rỗng",
-  "bio": "Tiểu sử hoặc mô tả ngắn gọn về trang/người này (loại bỏ các thông tin rác). Nếu không có, trả về rỗng",
-  "profileType": "Phân loại: Trả về 'Individual' nếu đây là trang cá nhân (Profile) hoặc Fanpage của một CÁ NHÂN (nghệ sĩ, KOL, ca sĩ, diễn viên, người nổi tiếng, v.v.). Trả về 'Community' nếu đây là Group (Nhóm), hoặc Fanpage của một TỔ CHỨC, DOANH NGHIỆP, CỘNG ĐỒNG."
-}
             `;
 
             const aiResponse = await ai.models.generateContent({
@@ -160,9 +151,10 @@ Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
                     link: { type: Type.STRING },
                     followers: { type: Type.STRING },
                     bio: { type: Type.STRING },
-                    profileType: { type: Type.STRING }
+                    profileType: { type: Type.STRING },
+                    aiAnalysis: { type: Type.STRING }
                   },
-                  required: ["phone", "email", "link", "followers", "bio", "profileType"]
+                  required: ["phone", "email", "link", "followers", "bio", "profileType", "aiAnalysis"]
                 }
               }
             });
@@ -183,6 +175,9 @@ Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
               if (aiData.bio && aiData.bio.trim() !== "") bio = aiData.bio;
               if (aiData.profileType === 'Community' || aiData.profileType === 'Individual') {
                 profileType = aiData.profileType;
+              }
+              if (aiData.aiAnalysis && aiData.aiAnalysis.trim() !== "") {
+                aiAnalysis = aiData.aiAnalysis;
               }
             }
           }
@@ -210,7 +205,8 @@ Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
           phone,
           email,
           bioLink,
-          profileType
+          profileType,
+          aiAnalysis
         } : r));
 
       } catch (error: any) {
@@ -272,6 +268,7 @@ Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
       'Link Bio': row.bioLink || '',
       'Link': row.url,
       'Tiểu sử (Bio)': row.bio || '',
+      'AI Analysis': row.aiAnalysis || '',
       'Profile': row.profileType || '',
       'Link ảnh': row.profilePic || '',
       'Trạng thái': row.status === 'success' ? 'Thành công' : row.status === 'error' ? `Lỗi: ${row.errorMsg}` : 'Chưa xử lý'
@@ -436,7 +433,8 @@ Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
                 <th className="px-4 py-3 font-medium w-48">Email</th>
                 <th className="px-4 py-3 font-medium w-48">Link Bio</th>
                 <th className="px-4 py-3 font-medium w-48">Link</th>
-                <th className="px-4 py-3 font-medium min-w-[200px]">Tiểu sử (Bio)</th>
+                <th className="px-4 py-3 font-medium min-w-[160px]">Tiểu sử (Bio)</th>
+                <th className="px-4 py-3 font-medium min-w-[160px]">AI Phân tích</th>
                 <th className="px-4 py-3 font-medium w-24 text-center">Profile</th>
                 <th className="px-4 py-3 font-medium w-24 text-center">Ảnh</th>
                 <th className="px-4 py-3 font-medium w-32 text-center">Trạng thái</th>
@@ -468,10 +466,11 @@ Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
                     <td className="px-4 py-3 text-slate-500 truncate max-w-[12rem]" title={row.url}>
                       <a href={row.url} target="_blank" rel="noreferrer" className="hover:text-blue-600 hover:underline flex items-center gap-1">
                         <LinkIcon className="h-3 w-3 shrink-0" />
-                        <span className="truncate">{row.url}</span>
+                        <span className="truncate">{row.url.replace(/https?:\/\/(www\.)?/, '').substring(0, 30)}...</span>
                       </a>
                     </td>
                     <td className="px-4 py-3 text-slate-600 text-xs line-clamp-2" title={row.bio}>{row.bio || '-'}</td>
+                    <td className="px-4 py-3 text-purple-600 font-medium text-xs line-clamp-2" title={row.aiAnalysis}>{row.aiAnalysis || '-'}</td>
                     <td className="px-4 py-3 text-center">
                       {row.profileType === 'Community' ? (
                         <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-50 text-purple-600">Community</span>

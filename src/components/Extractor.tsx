@@ -100,6 +100,7 @@ export function Extractor({ onSaveToRestored }: ExtractorProps) {
         let phone = result.phone && result.phone !== "" ? result.phone : "N/A";
         let email = result.email && result.email !== "" ? result.email : "N/A";
         let bioLink = result.bioLink && result.bioLink !== "" ? result.bioLink : "N/A";
+        let aiAnalysis = "N/A";
 
         // Regex fallback for email
         const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
@@ -120,23 +121,15 @@ export function Extractor({ onSaveToRestored }: ExtractorProps) {
         }
 
         try {
-          const apiKey = process.env.GEMINI_API_KEY;
+          const apiKey = localStorage.getItem('scout_hub_gemini_key') || process.env.GEMINI_API_KEY;
           if (apiKey && result.bio) {
             const ai = new GoogleGenAI({ apiKey });
             const prompt = `
 Bạn là một chuyên gia trích xuất dữ liệu (Data Extractor).
-Hãy phân tích đoạn tiểu sử (Bio) TikTok sau đây và trích xuất ra Số điện thoại, Email, và Link (nếu có).
-Đặc biệt lưu ý với Số điện thoại: Các nhà sáng tạo thường dùng icon, emoji (như 0️⃣9️⃣...), ghi chữ (không chín...), hoặc thêm dấu chấm/phẩy/khoảng trắng để lách luật. Hãy nhận diện và chuyển đổi chúng thành một chuỗi số điện thoại hợp lệ (ví dụ: 0912345678).
-Nếu không tìm thấy thông tin, hãy trả về chuỗi rỗng "".
+Hãy phân tích đoạn tiểu sử (Bio) TikTok sau đây và trích xuất thông tin liên hệ.
+Ngoài ra, dựa vào thông tin (nếu có), dự đoán 1-2 câu ngắn gọn về tệp khán giả (Độ tuổi, giới tính) và phong cách kênh trong mục aiAnalysis. Nếu không biết ghi N/A.
 
 Bio: """${result.bio}"""
-
-Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
-{
-  "phone": "Số điện thoại đã được chuẩn hóa (chỉ chứa chữ số, ví dụ: 0912345678). Nếu không có, trả về rỗng",
-  "email": "Địa chỉ email. Nếu không có, trả về rỗng",
-  "link": "Đường link bất kỳ xuất hiện trong text (ví dụ: https://zalo.me/..., beacons.ai/...). Nếu không có, trả về rỗng"
-}
             `;
 
             const aiResponse = await ai.models.generateContent({
@@ -149,9 +142,10 @@ Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
                   properties: {
                     phone: { type: Type.STRING },
                     email: { type: Type.STRING },
-                    link: { type: Type.STRING }
+                    link: { type: Type.STRING },
+                    aiAnalysis: { type: Type.STRING }
                   },
-                  required: ["phone", "email", "link"]
+                  required: ["phone", "email", "link", "aiAnalysis"]
                 }
               }
             });
@@ -174,6 +168,9 @@ Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
               if (aiData.link && aiData.link.trim() !== "" && (!bioLink || bioLink === "N/A")) {
                 bioLink = aiData.link;
               }
+              if (aiData.aiAnalysis && aiData.aiAnalysis.trim() !== "") {
+                aiAnalysis = aiData.aiAnalysis;
+              }
             }
           }
         } catch (aiErr) {
@@ -190,7 +187,8 @@ Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
           profilePic: result.profilePic,
           phone,
           email,
-          bioLink
+          bioLink,
+          aiAnalysis
         } : r));
 
       } catch (error: any) {
@@ -252,6 +250,7 @@ Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
       'Link Bio': row.bioLink || '',
       'Link': row.url,
       'Tiểu sử (Bio)': row.bio || '',
+      'AI Analysis': row.aiAnalysis || '',
       'Link ảnh': row.profilePic || '',
       'Trạng thái': row.status === 'success' ? 'Thành công' : row.status === 'error' ? `Lỗi: ${row.errorMsg}` : 'Chưa xử lý'
     }));
@@ -415,7 +414,8 @@ Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
                 <th className="px-4 py-3 font-medium w-48">Email</th>
                 <th className="px-4 py-3 font-medium w-48">Link Bio</th>
                 <th className="px-4 py-3 font-medium w-48">Link</th>
-                <th className="px-4 py-3 font-medium min-w-[200px]">Tiểu sử (Bio)</th>
+                <th className="px-4 py-3 font-medium min-w-[160px]">Tiểu sử (Bio)</th>
+                <th className="px-4 py-3 font-medium min-w-[160px]">AI Phân tích</th>
                 <th className="px-4 py-3 font-medium w-24 text-center">Ảnh</th>
                 <th className="px-4 py-3 font-medium w-32 text-center">Trạng thái</th>
               </tr>
@@ -446,10 +446,11 @@ Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
                     <td className="px-4 py-3 text-slate-500 truncate max-w-[12rem]" title={row.url}>
                       <a href={row.url} target="_blank" rel="noreferrer" className="hover:text-blue-600 hover:underline flex items-center gap-1">
                         <LinkIcon className="h-3 w-3 shrink-0" />
-                        <span className="truncate">{row.url}</span>
+                        <span className="truncate">{row.url.replace(/https?:\/\/(www\.)?/, '').substring(0, 30)}...</span>
                       </a>
                     </td>
                     <td className="px-4 py-3 text-slate-600 text-xs line-clamp-2" title={row.bio}>{row.bio || '-'}</td>
+                    <td className="px-4 py-3 text-purple-600 font-medium text-xs line-clamp-2" title={row.aiAnalysis}>{row.aiAnalysis || '-'}</td>
                     <td className="px-4 py-3 text-center">
                       {row.profilePic ? (
                         <a href={row.profilePic} target="_blank" rel="noreferrer" className="inline-block">

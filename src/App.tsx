@@ -239,7 +239,12 @@ function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: st
   const [testMsg, setTestMsg] = useState('');
   const [showGuide, setShowGuide] = useState(false);
   const [showBookmarkletGuide, setShowBookmarkletGuide] = useState(false);
+  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('scout_hub_gemini_key') || '');
+  const [rapidApiKey, setRapidApiKey] = useState(() => localStorage.getItem('scout_hub_rapidapi_key') || '');
+  const [keysSaved, setKeysSaved] = useState(false);
   const isDark = theme === 'dark';
+
+  const hostOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
 
   const cardBg = isDark ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-white border-slate-200';
   const inputBg = isDark ? 'bg-white/5 border-white/10 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400';
@@ -251,7 +256,11 @@ function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: st
 
   const handleSave = () => {
     onSaveWebhookUrl(url.trim());
+    localStorage.setItem('scout_hub_gemini_key', geminiKey.trim());
+    localStorage.setItem('scout_hub_rapidapi_key', rapidApiKey.trim());
     setTestStatus('idle');
+    setKeysSaved(true);
+    setTimeout(() => setKeysSaved(false), 3000);
   };
 
   const handleTest = async () => {
@@ -427,14 +436,14 @@ function doGet(e) {
               />
               <button
                 onClick={handleSave}
-                className="px-4 py-2 text-sm font-medium bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors"
+                className="px-4 py-2 text-sm font-medium bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors whitespace-nowrap"
               >
-                Lưu
+                {keysSaved ? 'Đã lưu ✓' : 'Lưu tất cả'}
               </button>
               <button
                 onClick={handleTest}
                 disabled={!url.trim() || testStatus === 'testing'}
-                className={`px-4 py-2 text-sm font-medium border rounded-lg transition-colors disabled:opacity-40 ${isDark ? 'border-white/10 text-slate-300 hover:bg-white/5' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                className={`px-4 py-2 text-sm font-medium border rounded-lg transition-colors disabled:opacity-40 whitespace-nowrap ${isDark ? 'border-white/10 text-slate-300 hover:bg-white/5' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 {testStatus === 'testing' ? 'Đang test...' : 'Test'}
               </button>
@@ -444,6 +453,29 @@ function doGet(e) {
                 {testMsg}
               </p>
             )}
+          </div>
+          
+          <div className="pt-3 border-t border-white/10 space-y-3">
+             <div>
+                <label className={`text-xs font-medium ${textS} mb-1 block`}>Gemini API Key (Xử lý AI Demographics & Insights)</label>
+                <input
+                  type="password"
+                  value={geminiKey}
+                  onChange={(e) => setGeminiKey(e.target.value)}
+                  placeholder="AIzaSy..."
+                  className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${inputBg}`}
+                />
+             </div>
+             <div>
+                <label className={`text-xs font-medium ${textS} mb-1 block`}>RapidAPI Key (Tính TikTok Average Views / Engagement)</label>
+                <input
+                  type="password"
+                  value={rapidApiKey}
+                  onChange={(e) => setRapidApiKey(e.target.value)}
+                  placeholder="Để trống nếu đã cài đặt ở Server"
+                  className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${inputBg}`}
+                />
+             </div>
           </div>
         </div>
       </div>
@@ -536,13 +568,13 @@ function doGet(e) {
             
             <div className={`relative rounded-lg border p-4 overflow-x-auto ${codeBg}`}>
               <button
-                onClick={() => navigator.clipboard.writeText("javascript:(function(){var currentUrl=window.location.href;if(currentUrl.includes('tiktok.com')||currentUrl.includes('facebook.com')||currentUrl.includes('fb.com')){var newWindow=window.open('http://localhost:5173/?addUrl='+encodeURIComponent(currentUrl),'_blank');newWindow.focus();}else{alert('Scout Hub chỉ hỗ trợ nền tảng TikTok và Facebook!');}})();")}
+                onClick={() => navigator.clipboard.writeText(`javascript:(function(){var currentUrl=window.location.href;if(currentUrl.includes('tiktok.com')||currentUrl.includes('facebook.com')||currentUrl.includes('fb.com')){var newWindow=window.open('${hostOrigin}/?addUrl='+encodeURIComponent(currentUrl),'_blank');newWindow.focus();}else{alert('Scout Hub chỉ hỗ trợ nền tảng TikTok và Facebook!');}})();`)}
                 className="absolute top-2 right-2 px-2 py-1 text-[10px] font-medium bg-violet-600 text-white rounded hover:bg-violet-700 transition-colors"
               >
                 Copy
               </button>
               <pre className={`text-[11px] ${codeText} whitespace-pre-wrap`}>
-                javascript:(function()&#123;var currentUrl=window.location.href;if(currentUrl.includes('tiktok.com')||currentUrl.includes('facebook.com')||currentUrl.includes('fb.com'))&#123;var newWindow=window.open('http://localhost:5173/?addUrl='+encodeURIComponent(currentUrl),'_blank');newWindow.focus();&#125;else&#123;alert('Scout Hub chỉ hỗ trợ nền tảng TikTok và Facebook!');&#125;&#125;)();
+                javascript:(function()&#123;var currentUrl=window.location.href;if(currentUrl.includes('tiktok.com')||currentUrl.includes('facebook.com')||currentUrl.includes('fb.com'))&#123;var newWindow=window.open('{hostOrigin}/?addUrl='+encodeURIComponent(currentUrl),'_blank');newWindow.focus();&#125;else&#123;alert('Scout Hub chỉ hỗ trợ nền tảng TikTok và Facebook!');&#125;&#125;)();
               </pre>
             </div>
 
@@ -556,7 +588,8 @@ function doGet(e) {
             </div>
             <div className={`p-3 rounded-lg ${isDark ? 'bg-blue-500/10 border border-blue-500/20' : 'bg-blue-50 border border-blue-200'}`}>
               <p className={`text-xs ${isDark ? 'text-blue-300' : 'text-blue-700'}`}>
-                📌 <strong>Ghi chú:</strong> Để Bookmarklet hoạt động, ứng dụng Scout Hub của bạn (localhost:5173) phải đang chạy.
+                📌 <strong>Ghi chú:</strong> Mã Bookmarklet ở trên đã tự động lấy đường dẫn hệ thống hiện tại của bạn ({hostOrigin}). 
+                Chỉ cần kéo thả lưu lại là có thể kéo mở Hub từ bất kỳ tab TikTok/Facebook nào.
               </p>
             </div>
           </div>

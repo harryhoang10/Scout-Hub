@@ -23,6 +23,7 @@ export interface ProfileData {
   totalShares?: number;
   totalSaves?: number;
   videoCount?: number;
+  aiAnalysis?: string;
 }
 
 export interface ProfileNote {

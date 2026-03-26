@@ -303,9 +303,9 @@ app.use(express.json({ limit: '10mb' }));
         return res.status(400).json({ error: 'Username is required' });
       }
 
-      const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
+      const RAPIDAPI_KEY = (req.headers['x-rapidapi-key'] as string) || process.env.RAPIDAPI_KEY;
       if (!RAPIDAPI_KEY || RAPIDAPI_KEY === 'YOUR_RAPIDAPI_KEY') {
-        return res.status(400).json({ error: 'RapidAPI key chưa được cấu hình. Vui lòng thêm RAPIDAPI_KEY vào file .env' });
+        return res.status(400).json({ error: 'RapidAPI key chưa được cấu hình. Vui lòng thiết lập trong Cài đặt hoặc file .env' });
       }
 
       // Call RapidAPI TikTok Scraper - get user posts
