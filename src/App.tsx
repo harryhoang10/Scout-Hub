@@ -240,7 +240,6 @@ function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: st
   const [showGuide, setShowGuide] = useState(false);
   const [showBookmarkletGuide, setShowBookmarkletGuide] = useState(false);
   const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('scout_hub_gemini_key') || '');
-  const [rapidApiKey, setRapidApiKey] = useState(() => localStorage.getItem('scout_hub_rapidapi_key') || '');
   const [keysSaved, setKeysSaved] = useState(false);
   const isDark = theme === 'dark';
 
@@ -257,7 +256,6 @@ function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: st
   const handleSave = () => {
     onSaveWebhookUrl(url.trim());
     localStorage.setItem('scout_hub_gemini_key', geminiKey.trim());
-    localStorage.setItem('scout_hub_rapidapi_key', rapidApiKey.trim());
     setTestStatus('idle');
     setKeysSaved(true);
     setTimeout(() => setKeysSaved(false), 3000);
@@ -463,16 +461,6 @@ function doGet(e) {
                   value={geminiKey}
                   onChange={(e) => setGeminiKey(e.target.value)}
                   placeholder="AIzaSy..."
-                  className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${inputBg}`}
-                />
-             </div>
-             <div>
-                <label className={`text-xs font-medium ${textS} mb-1 block`}>RapidAPI Key (Tính TikTok Average Views / Engagement)</label>
-                <input
-                  type="password"
-                  value={rapidApiKey}
-                  onChange={(e) => setRapidApiKey(e.target.value)}
-                  placeholder="Để trống nếu đã cài đặt ở Server"
                   className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${inputBg}`}
                 />
              </div>
