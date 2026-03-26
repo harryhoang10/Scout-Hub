@@ -136,7 +136,7 @@ app.use(express.json({ limit: '10mb' }));
                 const videoStats: Array<{views: number, likes: number, comments: number, shares: number}> = [];
                 const rawJson = scriptContent;
                 
-                while ((match = videoRegex.exec(rawJson)) !== null && videoStats.length < 10) {
+                while ((match = videoRegex.exec(rawJson)) !== null && videoStats.length < 13) {
                   videoStats.push({
                     views: parseInt(match[1]) || 0,
                     likes: parseInt(match[2]) || 0,
@@ -146,19 +146,24 @@ app.use(express.json({ limit: '10mb' }));
                 }
                 
                 if (videoStats.length > 0) {
-                  videoCount = videoStats.length;
-                  const totals = videoStats.reduce((acc, v) => ({
+                  const skipCount = Math.min(3, videoStats.length);
+                  const targetStats = videoStats.length > 3 
+                    ? videoStats.slice(skipCount, skipCount + 10)
+                    : videoStats;
+                  
+                  videoCount = targetStats.length;
+                  const totals = targetStats.reduce((acc, v) => ({
                     views: acc.views + v.views,
                     likes: acc.likes + v.likes,
                     comments: acc.comments + v.comments,
                     shares: acc.shares + v.shares,
                   }), { views: 0, likes: 0, comments: 0, shares: 0 });
                   
-                  averageView = Math.round(totals.views / videoCount);
+                  averageView = videoCount > 0 ? Math.round(totals.views / videoCount) : 0;
                   totalLikes = totals.likes;
                   totalComments = totals.comments;
                   totalShares = totals.shares;
-                  averageEngagement = Math.round((totals.likes + totals.comments + totals.shares) / videoCount);
+                  averageEngagement = videoCount > 0 ? Math.round((totals.likes + totals.comments + totals.shares) / videoCount) : 0;
                 }
               } catch(e) {
                 // Regex extraction failed, continue
@@ -167,21 +172,24 @@ app.use(express.json({ limit: '10mb' }));
 
             // If we got video items from structured data
             if (videoItems.length > 0) {
-              const top10 = videoItems.slice(0, 10);
-              videoCount = top10.length;
+              const skipCount = Math.min(3, videoItems.length);
+              const targetItems = videoItems.length > 3 
+                ? videoItems.slice(skipCount, skipCount + 10)
+                : videoItems.slice(0, 10);
+              videoCount = targetItems.length;
               
-              const totals = top10.reduce((acc: any, video: any) => ({
+              const totals = targetItems.reduce((acc: any, video: any) => ({
                 views: acc.views + (video.stats?.playCount || video.playCount || 0),
                 likes: acc.likes + (video.stats?.diggCount || video.diggCount || 0),
                 comments: acc.comments + (video.stats?.commentCount || video.commentCount || 0),
                 shares: acc.shares + (video.stats?.shareCount || video.shareCount || 0),
               }), { views: 0, likes: 0, comments: 0, shares: 0 });
               
-              averageView = Math.round(totals.views / videoCount);
+              averageView = videoCount > 0 ? Math.round(totals.views / videoCount) : 0;
               totalLikes = totals.likes;
               totalComments = totals.comments;
               totalShares = totals.shares;
-              averageEngagement = Math.round((totals.likes + totals.comments + totals.shares) / videoCount);
+              averageEngagement = videoCount > 0 ? Math.round((totals.likes + totals.comments + totals.shares) / videoCount) : 0;
             }
 
             return res.json({
@@ -228,7 +236,12 @@ app.use(express.json({ limit: '10mb' }));
             let averageView = 0, averageEngagement = 0, totalLikes = 0, totalComments = 0, totalShares = 0, videoCount = 0;
 
             if (itemModule) {
-              const videos = Object.values(itemModule).slice(0, 10) as any[];
+              const allVideos = Object.values(itemModule) as any[];
+              const skipCount = Math.min(3, allVideos.length);
+              const videos = allVideos.length > 3 
+                ? allVideos.slice(skipCount, skipCount + 10)
+                : allVideos.slice(0, 10);
+              
               videoCount = videos.length;
               if (videoCount > 0) {
                 const totals = videos.reduce((acc: any, v: any) => ({
