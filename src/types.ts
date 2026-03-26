@@ -16,9 +16,12 @@ export interface ProfileData {
   platform?: Platform;
   profileType?: 'Individual' | 'Community' | 'N/A';
   // TikTok engagement metrics
+  averageView?: number;
+  averageEngagement?: number;
   totalLikes?: number;
   totalComments?: number;
   totalShares?: number;
+  totalSaves?: number;
   videoCount?: number;
 }
 
@@ -37,8 +40,9 @@ export interface RestoredData extends ProfileData {
   location: string[];
   group: string[];
   campaign: string[];
+  sow: string[];
   notes: { id: string, text: string, createdAt: string }[];
-  rateHistory?: { id: string, date: string, price: number, note?: string }[];
+  rateHistory?: { id: string, date: string, price: number, note?: string, sow?: string[] }[];
   rating: number;
   saveDate: string;
   lastUpdated?: string;

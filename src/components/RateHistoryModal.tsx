@@ -13,6 +13,9 @@ interface RateHistoryModalProps {
 export const RateHistoryModal: React.FC<RateHistoryModalProps> = ({ isOpen, onClose, profile, onUpdateRates, theme }) => {
   const [priceStr, setPriceStr] = useState('');
   const [note, setNote] = useState('');
+  const [sow, setSow] = useState<string[]>([]);
+  const [customSow, setCustomSow] = useState('');
+  const SOW_OPTIONS = ['Photo Post', 'Video Post', 'SDHA (KĐQ)', 'SDHA (ĐQ)'];
 
   if (!isOpen || !profile) return null;
 
@@ -40,12 +43,15 @@ export const RateHistoryModal: React.FC<RateHistoryModalProps> = ({ isOpen, onCl
       id: Math.random().toString(36).substring(7),
       date: saveDate,
       price: numPrice,
-      note: note.trim()
+      note: note.trim(),
+      sow: [...sow]
     };
 
     onUpdateRates(profile.id, [...history, newRate]);
     setPriceStr('');
     setNote('');
+    setSow([]);
+    setCustomSow('');
   };
 
   const handleDelete = (rateId: string) => {
@@ -103,6 +109,45 @@ export const RateHistoryModal: React.FC<RateHistoryModalProps> = ({ isOpen, onCl
               />
             </div>
           </div>
+          
+          {/* SOW Selection */}
+          <div className="space-y-2 pb-1">
+            <label className={`block text-[11px] font-medium ${textS}`}>Gói công việc (SOW)</label>
+            <div className="flex flex-wrap gap-1.5">
+              {SOW_OPTIONS.map(opt => (
+                <button
+                  key={opt}
+                  onClick={() => setSow(prev => prev.includes(opt) ? prev.filter(s => s !== opt) : [...prev, opt])}
+                  className={`px-2 py-1 text-[10px] rounded-md transition-colors border ${sow.includes(opt) ? (isDark ? 'bg-pink-900/40 text-pink-300 border-pink-500/30' : 'bg-pink-100 text-pink-700 border-pink-200') : (isDark ? 'bg-white/5 text-slate-400 border-white/10 hover:bg-white/10' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100')}`}
+                >
+                  {opt}
+                </button>
+              ))}
+              {sow.filter(s => !SOW_OPTIONS.includes(s)).map(opt => (
+                <button
+                  key={opt}
+                  onClick={() => setSow(prev => prev.filter(s => s !== opt))}
+                  className={`px-2 py-1 text-[10px] rounded-md flex items-center transition-colors border ${isDark ? 'bg-pink-900/40 text-pink-300 border-pink-500/30' : 'bg-pink-100 text-pink-700 border-pink-200'}`}
+                >
+                  {opt} <X className="inline-block h-2.5 w-2.5 ml-1 opacity-70" />
+                </button>
+              ))}
+              <input
+                type="text"
+                value={customSow}
+                onChange={(e) => setCustomSow(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && customSow.trim() && !sow.includes(customSow.trim())) {
+                    setSow(prev => [...prev, customSow.trim()]);
+                    setCustomSow('');
+                  }
+                }}
+                placeholder="+ Tùy chỉnh (Enter)"
+                className={`w-28 px-2 py-1 text-[10px] rounded-md border focus:outline-none focus:ring-1 focus:ring-violet-500/50 ${inputBg}`}
+              />
+            </div>
+          </div>
+
           <button 
             onClick={handleAdd}
             disabled={!priceStr.trim()}
@@ -134,6 +179,15 @@ export const RateHistoryModal: React.FC<RateHistoryModalProps> = ({ isOpen, onCl
                       </span>
                     </div>
                     {rate.note && <p className={`text-xs mt-1.5 ${textS}`}>{rate.note}</p>}
+                    {rate.sow && rate.sow.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {rate.sow.map(s => (
+                          <span key={s} className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${isDark ? 'bg-pink-900/20 text-pink-300 border border-pink-500/20' : 'bg-pink-50 border border-pink-200 text-pink-600'}`}>
+                            {s}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <button 
                     onClick={() => handleDelete(rate.id)}

@@ -81,6 +81,7 @@ export function Restored({ data, onUpdateData }: RestoredProps) {
             location: locationStr ? locationStr.split(',').map((s: string) => s.trim()).filter(Boolean) : [],
             group: groupStr ? groupStr.split(',').map((s: string) => s.trim()).filter(Boolean) : [],
             campaign: [],
+            sow: [],
             notes: [],
             rating: 0,
             saveDate: row['Ngày lưu trữ'] || row['Save Date'] || saveDate

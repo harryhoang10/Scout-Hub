@@ -17,6 +17,7 @@ const NOTE_TEMPLATES = ["Đã liên hệ", "Chờ báo giá", "Nắm giá", "T�
 const LOCATION_OPTIONS = ['Bắc', 'Trung', 'Nam'];
 const GROUP_OPTIONS = ['Beauty', 'Fashion', 'Food', 'Tech', 'Education', 'Entertainment', 'Lifestyle', 'Travel', 'Health', 'Sports'];
 const CAMPAIGN_OPTIONS = ['Tết 2026', 'Summer Promo', 'Black Friday', 'Launch Event', 'Brand Ambassador'];
+const SOW_OPTIONS = ['Photo Post', 'Video Post', 'SDHA (KĐQ)', 'SDHA (ĐQ)'];
 
 const TIER_OPTIONS: Tier[] = ['Macro', 'Micro', 'Nano', 'UGC'];
 type SortField = 'saveDate' | 'nickname' | 'followers' | 'rating';
@@ -84,6 +85,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
   const dynamicLocations = useMemo(() => Array.from(new Set([...LOCATION_OPTIONS, ...data.flatMap(d => d.location)])), [data]);
   const dynamicGroups = useMemo(() => Array.from(new Set([...GROUP_OPTIONS, ...data.flatMap(d => d.group)])), [data]);
   const dynamicCampaigns = useMemo(() => Array.from(new Set([...CAMPAIGN_OPTIONS, ...data.flatMap(d => d.campaign)])), [data]);
+  const dynamicSow = useMemo(() => Array.from(new Set([...SOW_OPTIONS, ...data.flatMap(d => d.sow || [])])), [data]);
 
   // Refresh from webhook
   const refreshFromSheet = async () => {
@@ -104,6 +106,8 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
           nickname: row['Tên'] || row.nickname || '',
           channelId: row['ID'] || row.channelId || '',
           followers: row['Followers'] || row.followers || '',
+          averageView: Number(row['Avg View'] || row.averageView) || 0,
+          averageEngagement: Number(row['Avg Engagement'] || row.averageEngagement) || 0,
           phone: row['SĐT'] || row.phone || '',
           email: row['Email'] || row.email || '',
           bioLink: row['Link Bio'] || row.bioLink || '',
@@ -111,13 +115,15 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
           profilePic: row['Avatar'] || row.profilePic || '',
           platform: row['Platform'] || row.platform || 'TikTok',
           profileType: row['Profile'] || 'Individual',
-          tier: row['Tier'] ? row['Tier'].split(', ') : [],
-          location: row['Vị trí'] ? row['Vị trí'].split(', ') : [],
-          group: [],
-          campaign: [],
-          notes: [],
-          rating: 0,
-          saveDate: row['Ngày'] || row.saveDate || new Date().toLocaleDateString('vi-VN'),
+          tier: row['Tier'] ? String(row['Tier']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
+          location: row['Vị trí'] ? String(row['Vị trí']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
+          group: row['Nhóm'] ? String(row['Nhóm']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
+          campaign: row['Campaign'] ? String(row['Campaign']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
+          sow: row['SOW'] ? String(row['SOW']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
+          notes: row.notes || [],
+          rateHistory: row.rateHistory || [],
+          rating: Number(row['Rating'] || row.rating) || 0,
+          saveDate: row['Ngày'] || row['Ngày lưu trữ'] || row.saveDate || new Date().toLocaleDateString('vi-VN'),
         })).filter((r: any) => r.url);
         
         // Merge: add new items that don't exist by URL
@@ -155,6 +161,8 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
           nickname: row['Tên'] || row['nickname'] || row['Name'] || '',
           channelId: row['ID'] || row['channelId'] || '',
           followers: row['Followers'] || row['followers'] || row['Followers / Members'] || '',
+          averageView: Number(row['Avg View'] || row['averageView']) || 0,
+          averageEngagement: Number(row['Avg Engagement'] || row['averageEngagement']) || 0,
           phone: row['SĐT'] || row['phone'] || '',
           email: row['Email'] || row['email'] || '',
           bioLink: row['Link Bio'] || row['bioLink'] || '',
@@ -162,12 +170,13 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
           profilePic: row['Link ảnh'] || row['profilePic'] || row['Avatar'] || '',
           platform: row['Platform'] || row['platform'] || 'TikTok',
           profileType: row['Profile'] || row['profileType'] || 'Individual',
-          tier: (row['Tier'] ? row['Tier'].split(',').map((s: string) => s.trim()).filter(Boolean) : []) as Tier[],
-          location: row['Vị trí'] ? row['Vị trí'].split(',').map((s: string) => s.trim()).filter(Boolean) : [],
-          group: row['Nhóm Influencer'] ? row['Nhóm Influencer'].split(',').map((s: string) => s.trim()).filter(Boolean) : [],
-          campaign: [],
+          tier: (row['Tier'] ? String(row['Tier']).split(',').map((s: string) => s.trim()).filter(Boolean) : []) as Tier[],
+          location: row['Vị trí'] ? String(row['Vị trí']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
+          group: row['Nhóm'] || row['Nhóm Influencer'] ? String(row['Nhóm'] || row['Nhóm Influencer']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
+          campaign: row['Campaign'] ? String(row['Campaign']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
+          sow: row['SOW'] ? String(row['SOW']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
           notes: [],
-          rating: row['Rating'] || 0,
+          rating: Number(row['Rating']) || 0,
           saveDate: row['Ngày lưu trữ'] || row['Save Date'] || saveDate,
         })).filter(r => r.url);
         onUpdateData([...data, ...newRows]);
@@ -180,6 +189,13 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const formatNum = (val: number | undefined): string => {
+    if (!val) return '';
+    if (val >= 1_000_000) return (val / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (val >= 1_000) return (val / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
+    return val.toString();
+  };
+
   const exportToExcel = () => {
     if (data.length === 0) return;
     const exportData = data.map((row, index) => ({
@@ -189,18 +205,23 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
       'Tên': row.nickname || '',
       'ID': row.channelId || '',
       'Followers': formatFollowers(row.followers) || '',
+      'Avg View': row.averageView || '',
+      'Avg Engagement': row.averageEngagement || '',
       'SĐT': row.phone || '',
       'Email': row.email || '',
       'Link Bio': row.bioLink || '',
       'Link': row.url,
       'Bio': row.bio || '',
       'Avatar': row.profilePic || '',
+      'Profile': row.profileType || 'Individual',
       'Tier': row.tier.join(', '),
       'Vị trí': row.location.join(', '),
-      'Nhóm Influencer': row.group.join(', '),
+      'Nhóm': row.group.join(', '),
       'Campaign': row.campaign.join(', '),
-      'Rating': row.rating || 0,
+      'SOW': (row.sow || []).join(', '),
       'Ghi chú': (row.notes || []).map(n => n.text).join(' | '),
+      'Rate History': (row.rateHistory || []).map(r => `${r.price.toLocaleString('vi-VN')}đ (${r.date}${r.note ? ' - ' + r.note : ''})`).join(' | '),
+      'Rating': row.rating || 0,
     }));
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
@@ -618,6 +639,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
                   {row.tier.map(t => <span key={t} className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${tagColors.violet}`}>{t}</span>)}
                   {row.location.map(l => <span key={l} className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${tagColors.emerald}`}>{l}</span>)}
                   {row.group.map(g => <span key={g} className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${tagColors.blue}`}>{g}</span>)}
+                  {(row.sow || []).map(s => <span key={s} className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${isDark ? 'bg-pink-900/40 text-pink-300' : 'bg-pink-100 text-pink-700'}`}>{s}</span>)}
                 </div>
                 <div className="flex items-center gap-3 mt-3">
                   <a href={row.url} target="_blank" rel="noreferrer" className={`text-[10px] flex items-center gap-1 ${isDark ? 'text-violet-400 hover:text-violet-300' : 'text-violet-600 hover:text-violet-500'}`}>
@@ -650,6 +672,8 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
                   <th className="px-3 py-3 font-medium w-24 text-right cursor-pointer" onClick={() => handleSort('followers')}>
                     <div className="flex items-center justify-end">Followers <SortIcon field="followers" /></div>
                   </th>
+                  <th className="px-3 py-3 font-medium w-24 text-right">Avg View</th>
+                  <th className="px-3 py-3 font-medium w-28 text-right">Avg Engage</th>
                   <th className="px-3 py-3 font-medium w-28">SĐT</th>
                   <th className="px-3 py-3 font-medium w-40">Email</th>
                   <th className="px-3 py-3 font-medium w-28">Link Bio</th>
@@ -660,6 +684,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
                   <th className="px-3 py-3 font-medium min-w-[100px]">Vị trí</th>
                   <th className="px-3 py-3 font-medium min-w-[120px]">Nhóm</th>
                   <th className="px-3 py-3 font-medium min-w-[130px]">Campaign</th>
+                  <th className="px-3 py-3 font-medium min-w-[130px]">SOW</th>
                   <th className="px-3 py-3 font-medium min-w-[200px]">Ghi chú</th>
                   <th className="px-3 py-3 font-medium w-12 text-center">Xóa</th>
                 </tr>
@@ -694,6 +719,12 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
                       </div>
                     </td>
                     <td className={`px-3 py-3 text-right font-medium ${textP}`}>{formatFollowers(row.followers) || '-'}</td>
+                    <td className={`px-3 py-3 text-right text-xs font-medium ${isDark ? 'text-cyan-400' : 'text-cyan-600'}`}>
+                      {row.platform === 'TikTok' && row.averageView ? formatNum(row.averageView) : '-'}
+                    </td>
+                    <td className={`px-3 py-3 text-right text-xs font-medium ${isDark ? 'text-amber-400' : 'text-amber-600'}`} title={row.platform === 'TikTok' && row.averageEngagement ? '❤️ Likes + 💬 Comments + 🔄 Shares + 🔖 Saves' : ''}>
+                      {row.platform === 'TikTok' && row.averageEngagement ? formatNum(row.averageEngagement) : '-'}
+                    </td>
                     <td className={`px-3 py-3 font-medium text-xs ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{row.phone && row.phone !== 'N/A' ? row.phone : '-'}</td>
                     <td className={`px-3 py-3 ${textS} text-xs truncate max-w-[10rem]`}>{row.email && row.email !== 'N/A' ? row.email : '-'}</td>
                     <td className={`px-3 py-3 ${textS} text-xs`}>
@@ -725,6 +756,11 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
                     <td className={`px-3 py-3 text-xs ${textS}`}>
                       <div className="w-full min-w-[140px]">
                         <TagSelector options={dynamicCampaigns} value={row.campaign} onChange={(val) => updateRow(row.id, 'campaign', val)} color="violet" />
+                      </div>
+                    </td>
+                    <td className={`px-3 py-3 text-xs ${textS}`}>
+                      <div className="w-full min-w-[130px]">
+                        <TagSelector options={dynamicSow} value={row.sow || []} onChange={(val) => updateRow(row.id, 'sow', val)} color="emerald" />
                       </div>
                     </td>
                     <td className="px-3 py-3">

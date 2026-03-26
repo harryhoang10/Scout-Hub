@@ -38,6 +38,7 @@ export default function App() {
           location: r.location || [],
           group: r.group || [],
           campaign: r.campaign || [],
+          sow: r.sow || [],
           notes: r.notes || [],
           rating: r.rating || 0,
           phone: r.phone || '',
@@ -278,9 +279,9 @@ function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: st
   };
 
   const appsScriptCode = `const COLUMNS = [
-  "Ngày lưu trữ", "Platform", "Tên", "ID", "Followers", "SĐT", "Email", 
-  "Link Bio", "Link", "Bio", "Avatar", "Profile", "Tier", "Vị trí", 
-  "Nhóm", "Campaign", "Notes", "Rate History", "Rating"
+  "Ngày lưu trữ", "Platform", "Tên", "ID", "Followers", "Avg View", "Avg Engagement",
+  "SĐT", "Email", "Link Bio", "Link", "Bio", "Avatar", "Profile",
+  "Tier", "Vị trí", "Nhóm", "Campaign", "SOW", "Notes", "Rate History", "Rating"
 ];
 
 function setupSheet() {
@@ -299,7 +300,7 @@ function doPost(e) {
     var linksToDelete = data.links || [];
     var sheetData = sheet.getDataRange().getValues();
     for (var i = sheetData.length - 1; i > 0; i--) {
-      var rowLink = sheetData[i][8];
+      var rowLink = sheetData[i][10];
       if (linksToDelete.indexOf(rowLink) !== -1) {
         sheet.deleteRow(i + 1);
       }
@@ -317,6 +318,8 @@ function doPost(e) {
       p.nickname || '',
       p.channelId || '',
       p.followers || '',
+      p.averageView || '',
+      p.averageEngagement || '',
       p.phone || '',
       p.email || '',
       p.bioLink || '',
@@ -328,6 +331,7 @@ function doPost(e) {
       (p.location || []).join(', '),
       (p.group || []).join(', '),
       (p.campaign || []).join(', '),
+      (p.sow || []).join(', '),
       JSON.stringify(p.notes || []),
       JSON.stringify(p.rateHistory || []),
       p.rating || 0
@@ -335,7 +339,7 @@ function doPost(e) {
     
     var foundIdx = -1;
     for (var i = 1; i < existingData.length; i++) {
-      if (existingData[i][8] === p.url) {
+      if (existingData[i][10] === p.url) {
         foundIdx = i;
         break;
       }
@@ -368,7 +372,7 @@ function doGet(e) {
   
   for (var i = 1; i < data.length; i++) {
     var row = data[i];
-    if (!row[8]) continue;
+    if (!row[10]) continue;
     
     rows.push({
       id: "row_" + i + "_" + new Date().getTime(),
@@ -377,20 +381,23 @@ function doGet(e) {
       nickname: row[2] || '',
       channelId: row[3] || '',
       followers: row[4] || '',
-      phone: row[5] || '',
-      email: row[6] || '',
-      bioLink: row[7] || '',
-      url: row[8] || '',
-      bio: row[9] || '',
-      profilePic: row[10] || '',
-      profileType: row[11] || 'Individual',
-      tier: row[12] ? String(row[12]).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
-      location: row[13] ? String(row[13]).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
-      group: row[14] ? String(row[14]).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
-      campaign: row[15] ? String(row[15]).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
-      notes: parseJSON(row[16], []),
-      rateHistory: parseJSON(row[17], []),
-      rating: Number(row[18]) || 0,
+      averageView: Number(row[5]) || 0,
+      averageEngagement: Number(row[6]) || 0,
+      phone: row[7] || '',
+      email: row[8] || '',
+      bioLink: row[9] || '',
+      url: row[10] || '',
+      bio: row[11] || '',
+      profilePic: row[12] || '',
+      profileType: row[13] || 'Individual',
+      tier: row[14] ? String(row[14]).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
+      location: row[15] ? String(row[15]).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
+      group: row[16] ? String(row[16]).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
+      campaign: row[17] ? String(row[17]).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
+      sow: row[18] ? String(row[18]).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
+      notes: parseJSON(row[19], []),
+      rateHistory: parseJSON(row[20], []),
+      rating: Number(row[21]) || 0,
       status: 'success'
     });
   }

@@ -220,6 +220,37 @@ Bio: "${data.bio}"`,
       } catch (e) { /* AI fail is non-blocking */ }
     }
 
+    // Fetch video engagement metrics via RapidAPI (non-blocking)
+    let averageView = 0, averageEngagement = 0, totalSaves = 0;
+    let videoTotalLikes = data.totalLikes || 0;
+    let videoTotalComments = data.totalComments || 0;
+    let videoTotalShares = data.totalShares || 0;
+    let videoCount = data.videoCount || 0;
+    
+    if (data.channelId) {
+      try {
+        const videoRes = await fetch('/api/tiktok-videos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: data.channelId }),
+        });
+        if (videoRes.ok) {
+          const videoData = await videoRes.json();
+          averageView = videoData.averageView || 0;
+          averageEngagement = videoData.averageEngagement || 0;
+          videoCount = videoData.videoCount || videoCount;
+          if (videoData.totals) {
+            videoTotalLikes = videoData.totals.likes || videoTotalLikes;
+            videoTotalComments = videoData.totals.comments || videoTotalComments;
+            videoTotalShares = videoData.totals.shares || videoTotalShares;
+            totalSaves = videoData.totals.saves || 0;
+          }
+        }
+      } catch (e) {
+        console.warn('Video engagement fetch failed (non-blocking):', e);
+      }
+    }
+
     return {
       nickname: data.nickname,
       channelId: data.channelId,
@@ -232,10 +263,13 @@ Bio: "${data.bio}"`,
       email: aiEmail || data.email || 'N/A',
       bioLink: aiBioLink || data.bioLink || 'N/A',
       platform: 'TikTok',
-      totalLikes: data.totalLikes,
-      totalComments: data.totalComments,
-      totalShares: data.totalShares,
-      videoCount: data.videoCount,
+      averageView,
+      averageEngagement,
+      totalLikes: videoTotalLikes,
+      totalComments: videoTotalComments,
+      totalShares: videoTotalShares,
+      totalSaves,
+      videoCount,
     };
   };
 
@@ -316,6 +350,7 @@ Mô tả: "${data.description}"`,
       location: [],
       group: [],
       campaign: [],
+      sow: [],
       notes: [],
       rateHistory: [],
       rating: 0,
@@ -362,6 +397,7 @@ Mô tả: "${data.description}"`,
       location: [],
       group: [],
       campaign: [],
+      sow: [],
       notes: [],
       rateHistory: [],
       rating: 0,
@@ -396,7 +432,9 @@ Mô tả: "${data.description}"`,
       'Platform': l.platform || 'TikTok',
       'Tên': l.nickname || '',
       'ID': l.channelId || '',
-      'Followers': formatFollowersForDisplay(l.followers), // Use the display formatter for export
+      'Followers': formatFollowersForDisplay(l.followers),
+      'Avg View': l.averageView || '',
+      'Avg Engagement': l.averageEngagement || '',
       'SĐT': l.phone || '',
       'Email': l.email || '',
       'Link Bio': l.bioLink || '',
@@ -518,6 +556,8 @@ Mô tả: "${data.description}"`,
                 <th className="px-3 py-3 font-medium w-36">Tên</th>
                 <th className="px-3 py-3 font-medium w-24">ID</th>
                 <th className="px-3 py-3 font-medium w-24 text-right">Followers</th>
+                <th className="px-3 py-3 font-medium w-24 text-right">Avg View</th>
+                <th className="px-3 py-3 font-medium w-28 text-right">Avg Engage</th>
                 <th className="px-3 py-3 font-medium w-24">SĐT</th>
                 <th className="px-3 py-3 font-medium w-32">Email</th>
                 <th className="px-3 py-3 font-medium w-24">Link Bio</th>
@@ -550,6 +590,12 @@ Mô tả: "${data.description}"`,
                   <td className={`px-3 py-2.5 font-medium ${textP} truncate max-w-[9rem]`}>{link.nickname || '-'}</td>
                   <td className={`px-3 py-2.5 text-xs ${textS} truncate max-w-[6rem]`}>{link.channelId ? `@${link.channelId}` : '-'}</td>
                   <td className={`px-3 py-2.5 text-right font-medium ${textP}`}>{formatFollowers(link.followers) || '-'}</td>
+                  <td className={`px-3 py-2.5 text-right text-xs font-medium ${isDark ? 'text-cyan-400' : 'text-cyan-600'}`}>
+                    {link.platform === 'TikTok' && link.averageView ? formatNumber(link.averageView) : '-'}
+                  </td>
+                  <td className={`px-3 py-2.5 text-right text-xs font-medium ${isDark ? 'text-amber-400' : 'text-amber-600'}`} title={link.platform === 'TikTok' && link.averageEngagement ? `❤️ Likes + 💬 Comments + 🔄 Shares + 🔖 Saves` : ''}>
+                    {link.platform === 'TikTok' && link.averageEngagement ? formatNumber(link.averageEngagement) : '-'}
+                  </td>
                   <td className={`px-3 py-2.5 text-xs font-medium ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{link.phone && link.phone !== 'N/A' ? link.phone : '-'}</td>
                   <td className={`px-3 py-2.5 text-xs ${textS} truncate max-w-[8rem]`}>{link.email && link.email !== 'N/A' ? link.email : '-'}</td>
                   <td className="px-3 py-2.5 text-xs">

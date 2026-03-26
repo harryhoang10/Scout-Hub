@@ -309,6 +309,7 @@ Hãy trả về kết quả dưới dạng JSON với cấu trúc sau:
       location: [],
       group: [],
       campaign: [],
+      sow: [],
       notes: [],
       rating: 0,
       saveDate
