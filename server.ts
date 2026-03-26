@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import * as cheerio from "cheerio";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -33,11 +32,10 @@ function extractContact(text: string) {
   return { phone, email };
 }
 
-async function startServer() {
-  const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+export const app = express();
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-  app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '10mb' }));
 
   // ============ TikTok Scrape API ============
   app.post("/api/scrape", async (req, res) => {
@@ -568,6 +566,7 @@ async function startServer() {
   });
 
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -584,9 +583,14 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
-}
+  if (process.env.NODE_ENV !== "production") {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  } else if (!process.env.VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Production server running on http://localhost:${PORT}`);
+    });
+  }
 
-startServer();
+export default app;
