@@ -322,7 +322,7 @@ app.use(express.json({ limit: '10mb' }));
       }
 
       // Call RapidAPI TikTok Scraper - get user posts
-      const apiUrl = `https://tiktok-scraper7.p.rapidapi.com/user/posts?unique_id=${encodeURIComponent(username)}&count=15`;
+      const apiUrl = `https://tiktok-scraper7.p.rapidapi.com/user/posts?unique_id=${encodeURIComponent(username)}&count=13`;
       
       const response = await fetch(apiUrl, {
         method: 'GET',
