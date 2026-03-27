@@ -47,11 +47,15 @@ function formatFollowers(val: string | number | undefined): string {
   return parsed.toString();
 }
 
+function roundMetric(val: number | undefined): number {
+  if (!val) return 0;
+  if (val < 1000) return Math.round(val / 100) * 100;
+  return Math.round(val / 1000) * 1000;
+}
+
 function formatNumber(val: number | undefined): string {
   if (!val) return '-';
-  if (val >= 1_000_000) return (val / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
-  if (val >= 1_000) return (val / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
-  return val.toString();
+  return roundMetric(val).toString();
 }
 
 export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme }: UniversalExtractorProps) {
@@ -446,8 +450,8 @@ Mô tả: "${data.description}"`,
       'Tên': l.nickname || '',
       'ID': l.channelId || '',
       'Followers': formatFollowersForDisplay(l.followers),
-      'Avg View': l.averageView || '',
-      'Avg Engagement': l.averageEngagement || '',
+      'Avg View': l.averageView ? roundMetric(l.averageView) : '',
+      'Avg Engagement': l.averageEngagement ? roundMetric(l.averageEngagement) : '',
       'SĐT': l.phone || '',
       'Email': l.email || '',
       'Link Bio': l.bioLink || '',

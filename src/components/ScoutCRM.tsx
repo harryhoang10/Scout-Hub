@@ -189,11 +189,15 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const roundMetric = (val: number | undefined): number => {
+    if (!val) return 0;
+    if (val < 1000) return Math.round(val / 100) * 100;
+    return Math.round(val / 1000) * 1000;
+  };
+
   const formatNum = (val: number | undefined): string => {
     if (!val) return '';
-    if (val >= 1_000_000) return (val / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
-    if (val >= 1_000) return (val / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
-    return val.toString();
+    return roundMetric(val).toString();
   };
 
   const exportToExcel = () => {
@@ -205,8 +209,8 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
       'Tên': row.nickname || '',
       'ID': row.channelId || '',
       'Followers': formatFollowers(row.followers) || '',
-      'Avg View': row.averageView || '',
-      'Avg Engagement': row.averageEngagement || '',
+      'Avg View': row.averageView ? roundMetric(row.averageView) : '',
+      'Avg Engagement': row.averageEngagement ? roundMetric(row.averageEngagement) : '',
       'SĐT': row.phone || '',
       'Email': row.email || '',
       'Link Bio': row.bioLink || '',

@@ -136,7 +136,7 @@ app.use(express.json({ limit: '10mb' }));
                 const videoStats: Array<{views: number, likes: number, comments: number, shares: number}> = [];
                 const rawJson = scriptContent;
                 
-                while ((match = videoRegex.exec(rawJson)) !== null && videoStats.length < 13) {
+                while ((match = videoRegex.exec(rawJson)) !== null && videoStats.length < 15) {
                   videoStats.push({
                     views: parseInt(match[1]) || 0,
                     likes: parseInt(match[2]) || 0,
@@ -146,10 +146,8 @@ app.use(express.json({ limit: '10mb' }));
                 }
                 
                 if (videoStats.length > 0) {
-                  const skipCount = Math.min(3, videoStats.length);
-                  const targetStats = videoStats.length > 3 
-                    ? videoStats.slice(skipCount, skipCount + 10)
-                    : videoStats;
+                  const sortedStats = [...videoStats].sort((a, b) => a.views - b.views);
+                  const targetStats = sortedStats.slice(0, 5);
                   
                   videoCount = targetStats.length;
                   const totals = targetStats.reduce((acc, v) => ({
@@ -170,12 +168,14 @@ app.use(express.json({ limit: '10mb' }));
               }
             }
 
-            // If we got video items from structured data
             if (videoItems.length > 0) {
-              const skipCount = Math.min(3, videoItems.length);
-              const targetItems = videoItems.length > 3 
-                ? videoItems.slice(skipCount, skipCount + 10)
-                : videoItems.slice(0, 10);
+              const recentItems = videoItems.slice(0, 15);
+              const sortedItems = [...recentItems].sort((a: any, b: any) => {
+                const viewsA = a.stats?.playCount || a.playCount || 0;
+                const viewsB = b.stats?.playCount || b.playCount || 0;
+                return viewsA - viewsB;
+              });
+              const targetItems = sortedItems.slice(0, 5);
               videoCount = targetItems.length;
               
               const totals = targetItems.reduce((acc: any, video: any) => ({
@@ -237,10 +237,13 @@ app.use(express.json({ limit: '10mb' }));
 
             if (itemModule) {
               const allVideos = Object.values(itemModule) as any[];
-              const skipCount = Math.min(3, allVideos.length);
-              const videos = allVideos.length > 3 
-                ? allVideos.slice(skipCount, skipCount + 10)
-                : allVideos.slice(0, 10);
+              const recentVideos = allVideos.slice(0, 15);
+              const sortedVideos = [...recentVideos].sort((a: any, b: any) => {
+                const viewsA = a.stats?.playCount || 0;
+                const viewsB = b.stats?.playCount || 0;
+                return viewsA - viewsB;
+              });
+              const videos = sortedVideos.slice(0, 5);
               
               videoCount = videos.length;
               if (videoCount > 0) {
@@ -322,7 +325,7 @@ app.use(express.json({ limit: '10mb' }));
       }
 
       // Call RapidAPI TikTok Scraper - get user posts
-      const apiUrl = `https://tiktok-scraper7.p.rapidapi.com/user/posts?unique_id=${encodeURIComponent(username)}&count=13`;
+      const apiUrl = `https://tiktok-scraper7.p.rapidapi.com/user/posts?unique_id=${encodeURIComponent(username)}&count=15`;
       
       const response = await fetch(apiUrl, {
         method: 'GET',
@@ -359,11 +362,16 @@ app.use(express.json({ limit: '10mb' }));
         });
       }
 
-      // Skip first 3 videos (most recent), take next 10
-      const skipCount = Math.min(3, videos.length);
-      const targetVideos = videos.length > 3 
-        ? videos.slice(skipCount, skipCount + 10)
-        : videos.slice(0, 10); // If <= 3 videos total, just use what we have
+      // Take up to 15 recent videos, sort by views ascending, take the 3 lowest
+      const recentVideos = videos.slice(0, 15);
+      const sortedVideos = [...recentVideos].sort((a: any, b: any) => {
+        const statsA = a.stats || a;
+        const statsB = b.stats || b;
+        const viewsA = statsA.play_count || statsA.playCount || a.play_count || 0;
+        const viewsB = statsB.play_count || statsB.playCount || b.play_count || 0;
+        return viewsA - viewsB;
+      });
+      const targetVideos = sortedVideos.slice(0, 5);
 
       const videoStats = targetVideos.map((v: any) => {
         const stats = v.stats || v;
