@@ -5,6 +5,7 @@ import { Button } from './ui/button';
 import * as XLSX from 'xlsx';
 import { ProfileData, RestoredData } from '../types';
 import { GoogleGenAI, Type } from "@google/genai";
+import { normalizeContact } from '../lib/contactParser';
 
 interface ExtractorProps {
   onSaveToRestored: (data: RestoredData[]) => void;
@@ -97,37 +98,24 @@ export function Extractor({ onSaveToRestored }: ExtractorProps) {
           throw new Error(result.error || 'Lỗi không xác định');
         }
 
-        let phone = result.phone && result.phone !== "" ? result.phone : "N/A";
-        let email = result.email && result.email !== "" ? result.email : "N/A";
-        let bioLink = result.bioLink && result.bioLink !== "" ? result.bioLink : "N/A";
         let aiAnalysis = "N/A";
-
-        // Regex fallback for email
-        const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
-        if (result.bio && (!email || email === "N/A")) {
-          const emailMatch = result.bio.match(emailRegex);
-          if (emailMatch && emailMatch.length > 0) {
-            email = emailMatch[0];
-          }
-        }
-
-        // Regex fallback for phone
-        const phoneRegex = /(?:zalo|sđt|phone|call|lh|liên hệ|hotline)?\s*[:\-.]?\s*((?:0|\+84)[0-9\.\-\s]{8,13})/i;
-        if (result.bio && (!phone || phone === "N/A")) {
-          const phoneMatch = result.bio.match(phoneRegex);
-          if (phoneMatch && phoneMatch.length > 1) {
-            phone = phoneMatch[1].replace(/[\.\-\s]/g, '');
-          }
-        }
+        const contact = normalizeContact({
+          phone: result.phone,
+          email: result.email,
+          bioLink: result.bioLink,
+          text: `${result.nickname || ''} ${result.bio || ''}`,
+          source: result.contactSource || 'api',
+        });
+        const contactWarnings = [...new Set([...(result.contactWarnings || []), ...contact.contactWarnings])];
 
         try {
-          const apiKey = localStorage.getItem('scout_hub_gemini_key') || process.env.GEMINI_API_KEY;
+          const apiKey = localStorage.getItem('scout_hub_gemini_key') || '';
           if (apiKey && result.bio) {
             const ai = new GoogleGenAI({ apiKey });
             const prompt = `
-Bạn là một chuyên gia trích xuất dữ liệu (Data Extractor).
-Hãy phân tích đoạn tiểu sử (Bio) TikTok sau đây và trích xuất thông tin liên hệ.
-Ngoài ra, dựa vào thông tin (nếu có), dự đoán 1-2 câu ngắn gọn về tệp khán giả (Độ tuổi, giới tính) và phong cách kênh trong mục aiAnalysis. Nếu không biết ghi N/A.
+Bạn là một chuyên gia phân tích profile TikTok.
+Không trích xuất hoặc suy đoán SĐT, email, link bio trong bước này.
+Chỉ dựa vào bio để dự đoán 1-2 câu ngắn gọn về tệp khán giả và phong cách kênh trong mục aiAnalysis. Nếu không biết ghi N/A.
 
 Bio: """${result.bio}"""
             `;
@@ -140,12 +128,9 @@ Bio: """${result.bio}"""
                 responseSchema: {
                   type: Type.OBJECT,
                   properties: {
-                    phone: { type: Type.STRING },
-                    email: { type: Type.STRING },
-                    link: { type: Type.STRING },
                     aiAnalysis: { type: Type.STRING }
                   },
-                  required: ["phone", "email", "link", "aiAnalysis"]
+                  required: ["aiAnalysis"]
                 }
               }
             });
@@ -159,15 +144,6 @@ Bio: """${result.bio}"""
               }
               const aiData = JSON.parse(text);
               
-              if (aiData.phone && aiData.phone.trim() !== "") {
-                phone = aiData.phone;
-              }
-              if (aiData.email && aiData.email.trim() !== "") {
-                email = aiData.email;
-              }
-              if (aiData.link && aiData.link.trim() !== "" && (!bioLink || bioLink === "N/A")) {
-                bioLink = aiData.link;
-              }
               if (aiData.aiAnalysis && aiData.aiAnalysis.trim() !== "") {
                 aiAnalysis = aiData.aiAnalysis;
               }
@@ -185,9 +161,11 @@ Bio: """${result.bio}"""
           followers: result.followers,
           bio: result.bio,
           profilePic: result.profilePic,
-          phone,
-          email,
-          bioLink,
+          phone: contact.phone,
+          email: contact.email,
+          bioLink: contact.bioLink,
+          contactSource: contact.contactSource,
+          contactWarnings,
           aiAnalysis
         } : r));
 

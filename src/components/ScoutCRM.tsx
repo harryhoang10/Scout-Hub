@@ -1,37 +1,50 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import {
   Trash2, CopyX, Star, Users, Briefcase, FileDown,
-  LayoutGrid, List, Search, ArrowUpDown, Loader2, Link as LinkIcon, Phone, Mail, Filter, Upload, RefreshCw, X, CheckCircle2, StickyNote, History, ChevronDown, Globe
+  LayoutGrid, List, Search, ArrowUpDown, Loader2, Link as LinkIcon, Phone, Mail, Filter, Upload, RefreshCw, X, CheckCircle2, StickyNote, History, ChevronDown, Globe, Bell, BellOff, Eye
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { RestoredData, Tier, ProfileNote } from '../types';
+import { RestoredData, Tier, WorkflowStatus } from '../types';
 import { TagSelector } from './TagSelector';
 import { upsertToSheet, deleteFromSheet } from '../lib/api';
 import { CompareModal } from './CompareModal';
 import { RateHistoryModal } from './RateHistoryModal';
 import { CampaignBoard } from './CampaignBoard';
-import { DashboardStats } from './DashboardStats';
+import { mergeProfileBatch } from '../lib/profileChangeDetection';
+import { classifyProfile, findDuplicateGroups, mergeDuplicateGroup } from '../lib/profileIntelligence';
 
 const MAX_STARS = 5;
-const NOTE_TEMPLATES = ["Đã liên hệ", "Chờ báo giá", "Nắm giá", "Từ chối"];
+const NOTE_TEMPLATES = [
+  "Đủ data để outreach",
+  "Cần verify contact",
+  "Fit campaign, ưu tiên shortlist",
+  "Đã liên hệ",
+  "Chờ phản hồi",
+  "Chờ báo giá",
+  "Đang negotiate",
+  "Từ chối / Không phù hợp",
+];
 const LOCATION_OPTIONS = ['Bắc', 'Trung', 'Nam'];
 const GROUP_OPTIONS = ['Beauty', 'Fashion', 'Food', 'Tech', 'Education', 'Entertainment', 'Lifestyle', 'Travel', 'Health', 'Sports'];
 const CAMPAIGN_OPTIONS = ['Tết 2026', 'Summer Promo', 'Black Friday', 'Launch Event', 'Brand Ambassador'];
 const SOW_OPTIONS = ['Photo Post', 'Video Post', 'SDHA (KĐQ)', 'SDHA (ĐQ)'];
 
 const TIER_OPTIONS: Tier[] = ['Macro', 'Micro', 'Nano', 'UGC'];
+const WORKFLOW_STATUSES: WorkflowStatus[] = ['New', 'Reviewed', 'Shortlisted', 'Contacted', 'Negotiating', 'Closed'];
 type SortField = 'saveDate' | 'nickname' | 'followers' | 'rating';
 type SortOrder = 'asc' | 'desc';
 type ViewMode = 'table' | 'card' | 'board';
+type LifecycleFilter = 'all' | 'watchlist' | 'changed_recently' | 'duplicates';
 
 interface ScoutCRMProps {
   data: RestoredData[];
   onUpdateData: (data: RestoredData[]) => void;
   webhookUrl?: string;
   theme?: string;
+  onRefreshProfiles?: (urls: string[]) => void;
 }
 
-export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProps) {
+export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfiles }: ScoutCRMProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<SortField>('saveDate');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
@@ -40,12 +53,16 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
   const [filterTier, setFilterTier] = useState<string>('all');
   const [filterCampaign, setFilterCampaign] = useState<string>('all');
   const [filterHasContact, setFilterHasContact] = useState<string>('all');
+  const [filterLifecycle, setFilterLifecycle] = useState<LifecycleFilter>('all');
+  const [filterWorkflowStatus, setFilterWorkflowStatus] = useState<string>('all');
+  const [filterNiche, setFilterNiche] = useState<string>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState('');
   const [showBulkActions, setShowBulkActions] = useState(false);
   const [showCompareModal, setShowCompareModal] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [activeChangeProfileId, setActiveChangeProfileId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Rate History Modal State
@@ -66,6 +83,14 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
     emerald: isDark ? 'bg-emerald-900/40 text-emerald-300 border-emerald-500/20' : 'bg-emerald-100 text-emerald-700 border-emerald-200',
     blue: isDark ? 'bg-blue-900/40 text-blue-300 border-blue-500/20' : 'bg-blue-100 text-blue-700 border-blue-200',
   };
+  const workflowColors: Record<WorkflowStatus, string> = {
+    New: isDark ? 'bg-slate-700/50 text-slate-300 border-slate-500/20' : 'bg-slate-100 text-slate-600 border-slate-200',
+    Reviewed: isDark ? 'bg-cyan-900/40 text-cyan-300 border-cyan-500/20' : 'bg-cyan-100 text-cyan-700 border-cyan-200',
+    Shortlisted: isDark ? 'bg-violet-900/40 text-violet-300 border-violet-500/20' : 'bg-violet-100 text-violet-700 border-violet-200',
+    Contacted: isDark ? 'bg-blue-900/40 text-blue-300 border-blue-500/20' : 'bg-blue-100 text-blue-700 border-blue-200',
+    Negotiating: isDark ? 'bg-amber-900/40 text-amber-300 border-amber-500/20' : 'bg-amber-100 text-amber-700 border-amber-200',
+    Closed: isDark ? 'bg-emerald-900/40 text-emerald-300 border-emerald-500/20' : 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  };
   const dropdownBg = isDark ? 'bg-slate-800 border-white/10' : 'bg-white border-slate-200 shadow-lg';
   const dropItemHover = isDark ? 'hover:bg-white/5' : 'hover:bg-slate-50';
   const btnOutline = isDark ? 'border-white/10 text-slate-300 hover:bg-white/5' : 'border-slate-200 text-slate-600 hover:bg-slate-50';
@@ -78,7 +103,9 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
     const hasPhone = data.filter(d => d.phone && d.phone !== 'N/A' && d.phone !== '-').length;
     const hasEmail = data.filter(d => d.email && d.email !== 'N/A' && d.email !== '-').length;
     const rated = data.filter(d => d.rating && d.rating > 0).length;
-    return { total, tiktok, facebook, hasPhone, hasEmail, rated };
+    const watchlisted = data.filter(d => d.isWatchlisted).length;
+    const changed = data.filter(d => d.changeHistory && d.changeHistory.length > 0).length;
+    return { total, tiktok, facebook, hasPhone, hasEmail, rated, watchlisted, changed };
   }, [data]);
 
   const dynamicTiers = useMemo(() => Array.from(new Set([...TIER_OPTIONS, ...data.flatMap(d => d.tier)])), [data]);
@@ -86,6 +113,32 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
   const dynamicGroups = useMemo(() => Array.from(new Set([...GROUP_OPTIONS, ...data.flatMap(d => d.group)])), [data]);
   const dynamicCampaigns = useMemo(() => Array.from(new Set([...CAMPAIGN_OPTIONS, ...data.flatMap(d => d.campaign)])), [data]);
   const dynamicSow = useMemo(() => Array.from(new Set([...SOW_OPTIONS, ...data.flatMap(d => d.sow || [])])), [data]);
+  const dynamicNiches = useMemo(() => Array.from(new Set(data.map(d => d.profileNiche).filter(Boolean))) as string[], [data]);
+  const duplicateGroups = useMemo(() => findDuplicateGroups(data), [data]);
+  const duplicateProfileIds = useMemo(() => new Set(duplicateGroups.flatMap(group => group.profiles.map(profile => profile.id))), [duplicateGroups]);
+  const workflowCounts = useMemo(() => {
+    return WORKFLOW_STATUSES.reduce<Record<WorkflowStatus, number>>((counts, status) => {
+      counts[status] = data.filter(row => (row.workflowStatus || 'New') === status).length;
+      return counts;
+    }, {
+      New: 0,
+      Reviewed: 0,
+      Shortlisted: 0,
+      Contacted: 0,
+      Negotiating: 0,
+      Closed: 0,
+    });
+  }, [data]);
+
+  useEffect(() => {
+    const needsClassification = data.some(row => !row.profileNiche || !row.audienceHint || row.classificationConfidence === undefined);
+    if (!needsClassification) return;
+
+    onUpdateData(data.map(row => {
+      if (row.profileNiche && row.audienceHint && row.classificationConfidence !== undefined) return row;
+      return { ...row, ...classifyProfile(row) };
+    }));
+  }, [data, onUpdateData]);
 
   // Refresh from webhook
   const refreshFromSheet = async () => {
@@ -123,18 +176,13 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
           notes: row.notes || [],
           rateHistory: row.rateHistory || [],
           rating: Number(row['Rating'] || row.rating) || 0,
+          workflowStatus: row['Workflow'] || row.workflowStatus || 'New',
           saveDate: row['Ngày'] || row['Ngày lưu trữ'] || row.saveDate || new Date().toLocaleDateString('vi-VN'),
         })).filter((r: any) => r.url);
         
-        // Merge: add new items that don't exist by URL
-        const existingUrls = new Set(data.map(d => d.url));
-        const newItems = imported.filter(i => !existingUrls.has(i.url));
-        if (newItems.length > 0) {
-          onUpdateData([...data, ...newItems]);
-          alert(`Đã import ${newItems.length} profiles mới từ Google Sheet.`);
-        } else {
-          alert('Không có profiles mới từ Google Sheet.');
-        }
+        const merged = mergeProfileBatch(data, imported, 'sheet');
+        onUpdateData(merged.data);
+        alert(`Sync Sheet xong: ${merged.stats.added} mới, ${merged.stats.updated} cập nhật, ${merged.stats.changed} có thay đổi.`);
       }
     } catch (e: any) {
       alert(`Lỗi: ${e.message}`);
@@ -177,10 +225,12 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
           sow: row['SOW'] ? String(row['SOW']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
           notes: [],
           rating: Number(row['Rating']) || 0,
+          workflowStatus: row['Workflow'] || row['workflowStatus'] || 'New',
           saveDate: row['Ngày lưu trữ'] || row['Save Date'] || saveDate,
         })).filter(r => r.url);
-        onUpdateData([...data, ...newRows]);
-        alert(`Đã import ${newRows.length} dòng.`);
+        const merged = mergeProfileBatch(data, newRows, 'import');
+        onUpdateData(merged.data);
+        alert(`Đã import ${newRows.length} dòng: ${merged.stats.added} mới, ${merged.stats.updated} cập nhật, ${merged.stats.changed} có thay đổi.`);
       } catch (error) {
         alert("Lỗi khi đọc file.");
       }
@@ -226,6 +276,13 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
       'Ghi chú': (row.notes || []).map(n => n.text).join(' | '),
       'Rate History': (row.rateHistory || []).map(r => `${r.price.toLocaleString('vi-VN')}đ (${r.date}${r.note ? ' - ' + r.note : ''})`).join(' | '),
       'Rating': row.rating || 0,
+      'Workflow': row.workflowStatus || 'New',
+      'Profile Niche': row.profileNiche || '',
+      'Audience Hint': row.audienceHint || '',
+      'Classification Confidence': row.classificationConfidence !== undefined ? Math.round(row.classificationConfidence * 100) + '%' : '',
+      'Watchlist': row.isWatchlisted ? 'Yes' : '',
+      'Last Changed': row.lastChangedAt || '',
+      'Change Count': row.changeHistory?.length || 0,
     }));
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
@@ -240,6 +297,38 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
       const editedRow = updatedData.find(r => r.id === id);
       if (editedRow) upsertToSheet(webhookUrl, [editedRow]);
     }
+  };
+
+  const isChangedRecently = (row: RestoredData) => {
+    if (!row.lastChangedAt && !(row.changeHistory && row.changeHistory.length > 0)) return false;
+    const changedAt = row.lastChangedAt || row.changeHistory?.[0]?.detectedAt;
+    if (!changedAt) return false;
+    const changedTime = new Date(changedAt).getTime();
+    if (!Number.isFinite(changedTime)) return false;
+    return Date.now() - changedTime <= 7 * 24 * 60 * 60 * 1000;
+  };
+
+  const toggleWatchlist = (row: RestoredData) => {
+    const nextValue = !row.isWatchlisted;
+    const updatedRow = {
+      ...row,
+      isWatchlisted: nextValue,
+      watchlistedAt: nextValue ? new Date().toISOString() : undefined,
+    };
+    const updatedData = data.map(item => item.id === row.id ? updatedRow : item);
+    onUpdateData(updatedData);
+    if (webhookUrl) upsertToSheet(webhookUrl, [updatedRow]);
+  };
+
+  const updateWorkflowStatus = (row: RestoredData, workflowStatus: WorkflowStatus) => {
+    const updatedRow = {
+      ...row,
+      workflowStatus,
+      lastReviewedAt: workflowStatus === 'Reviewed' ? new Date().toISOString() : row.lastReviewedAt,
+    };
+    const updatedData = data.map(item => item.id === row.id ? updatedRow : item);
+    onUpdateData(updatedData);
+    if (webhookUrl) upsertToSheet(webhookUrl, [updatedRow]);
   };
 
   const deleteRow = (id: string) => {
@@ -259,12 +348,24 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
   };
 
   const removeDuplicates = () => {
-    const unique: RestoredData[] = [];
-    const seen = new Set<string>();
-    data.forEach(row => { if (!seen.has(row.url)) { seen.add(row.url); unique.push(row); } });
-    const removed = data.length - unique.length;
-    if (removed > 0) { onUpdateData(unique); alert(`Đã loại bỏ ${removed} trùng lặp.`); }
-    else alert("Không có trùng lặp.");
+    const groups = findDuplicateGroups(data);
+    if (groups.length === 0) {
+      alert("Không có trùng lặp.");
+      return;
+    }
+
+    if (!confirm(`Tìm thấy ${groups.length} nhóm trùng lặp. Gộp tất cả và giữ profile có nhiều CRM data nhất?`)) return;
+    const mergedData = groups.reduce((currentData, group) => mergeDuplicateGroup(currentData, group.profiles.map(profile => profile.id)), data);
+    const removed = data.length - mergedData.length;
+    onUpdateData(mergedData);
+    alert(`Đã gộp ${groups.length} nhóm trùng lặp, loại ${removed} dòng duplicate.`);
+  };
+
+  const mergeOneDuplicateGroup = (ids: string[]) => {
+    const mergedData = mergeDuplicateGroup(data, ids);
+    const removed = data.length - mergedData.length;
+    onUpdateData(mergedData);
+    if (removed > 0) alert(`Đã gộp duplicate và loại ${removed} dòng.`);
   };
 
   const handleSort = (field: SortField) => {
@@ -272,13 +373,14 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
     else { setSortField(field); setSortOrder('desc'); }
   };
 
-  const addNote = (id: string) => {
-    if (!noteText.trim()) return;
+  const addNote = (id: string, templateText?: string) => {
+    const finalText = (templateText || noteText).trim();
+    if (!finalText) return;
     const row = data.find(r => r.id === id);
     if (row) {
       updateRow(id, 'notes', [...(row.notes || []), {
         id: Math.random().toString(36).substring(7),
-        text: noteText.trim(),
+        text: finalText,
         createdAt: new Date().toISOString(),
       }]);
     }
@@ -293,6 +395,15 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  };
+
+  const isInteractiveClick = (target: EventTarget | null) => {
+    return target instanceof Element && Boolean(target.closest('button, a, input, select, textarea, label, [role="button"]'));
+  };
+
+  const handleProfileRowClick = (event: React.MouseEvent, id: string) => {
+    if (isInteractiveClick(event.target)) return;
+    toggleSelect(id);
   };
 
   const selectAll = () => {
@@ -328,6 +439,44 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
     }
   };
 
+  const bulkSetWatchlist = (isWatchlisted: boolean) => {
+    const changedAt = new Date().toISOString();
+    const updatedData = data.map(r => selectedIds.has(r.id)
+      ? { ...r, isWatchlisted, watchlistedAt: isWatchlisted ? (r.watchlistedAt || changedAt) : undefined }
+      : r);
+    onUpdateData(updatedData);
+    if (webhookUrl) {
+      const editedRows = updatedData.filter(r => selectedIds.has(r.id));
+      if (editedRows.length > 0) upsertToSheet(webhookUrl, editedRows);
+    }
+  };
+
+  const bulkSetWorkflowStatus = (workflowStatus: WorkflowStatus) => {
+    const reviewedAt = new Date().toISOString();
+    const updatedData = data.map(r => selectedIds.has(r.id)
+      ? { ...r, workflowStatus, lastReviewedAt: workflowStatus === 'Reviewed' ? reviewedAt : r.lastReviewedAt }
+      : r);
+    onUpdateData(updatedData);
+    if (webhookUrl) {
+      const editedRows = updatedData.filter(r => selectedIds.has(r.id));
+      if (editedRows.length > 0) upsertToSheet(webhookUrl, editedRows);
+    }
+  };
+
+  const refreshProfiles = (profiles: RestoredData[]) => {
+    const urls = profiles.map(profile => profile.url).filter(Boolean);
+    if (urls.length === 0 || !onRefreshProfiles) return;
+    onRefreshProfiles(urls);
+  };
+
+  const refreshSelected = () => {
+    refreshProfiles(data.filter(profile => selectedIds.has(profile.id)));
+  };
+
+  const refreshWatchlist = () => {
+    refreshProfiles(data.filter(profile => profile.isWatchlisted));
+  };
+
   const parseNumberForSort = (val: string | number | undefined) => {
     if (!val) return 0;
     if (typeof val === 'number') return val;
@@ -343,9 +492,14 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
     if (filterPlatform !== 'all') result = result.filter(r => r.platform === filterPlatform);
     if (filterTier !== 'all') result = result.filter(r => r.tier.includes(filterTier as Tier));
     if (filterCampaign !== 'all') result = result.filter(r => r.campaign.includes(filterCampaign));
+    if (filterWorkflowStatus !== 'all') result = result.filter(r => (r.workflowStatus || 'New') === filterWorkflowStatus);
+    if (filterNiche !== 'all') result = result.filter(r => (r.profileNiche || 'Unclassified') === filterNiche);
     if (filterHasContact === 'phone') result = result.filter(r => r.phone && r.phone !== 'N/A' && r.phone !== '-');
     else if (filterHasContact === 'email') result = result.filter(r => r.email && r.email !== 'N/A' && r.email !== '-');
     else if (filterHasContact === 'both') result = result.filter(r => (r.phone && r.phone !== 'N/A' && r.phone !== '-') && (r.email && r.email !== 'N/A' && r.email !== '-'));
+    if (filterLifecycle === 'watchlist') result = result.filter(r => r.isWatchlisted);
+    else if (filterLifecycle === 'changed_recently') result = result.filter(isChangedRecently);
+    else if (filterLifecycle === 'duplicates') result = result.filter(r => duplicateProfileIds.has(r.id));
     
     if (searchTerm) {
       const lower = searchTerm.toLowerCase();
@@ -354,6 +508,9 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
         (r.bio?.toLowerCase().includes(lower)) || (r.tier.some(t => t.toLowerCase().includes(lower))) ||
         (r.location.some(l => l.toLowerCase().includes(lower))) || (r.group.some(g => g.toLowerCase().includes(lower))) ||
         (r.campaign.some(c => c.toLowerCase().includes(lower))) ||
+        ((r.workflowStatus || 'New').toLowerCase().includes(lower)) ||
+        ((r.profileNiche || '').toLowerCase().includes(lower)) ||
+        ((r.audienceHint || '').toLowerCase().includes(lower)) ||
         ((r.notes || []).some(n => n.text.toLowerCase().includes(lower)))
       );
     }
@@ -371,7 +528,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
       return 0;
     });
     return result;
-  }, [data, searchTerm, sortField, sortOrder, filterPlatform, filterTier, filterCampaign, filterHasContact]);
+  }, [data, searchTerm, sortField, sortOrder, filterPlatform, filterTier, filterCampaign, filterWorkflowStatus, filterNiche, filterHasContact, filterLifecycle, duplicateProfileIds]);
 
   const formatFollowers = (val: string | number | undefined): string => {
     if (val === undefined || val === null || val === '' || val === 'N/A') return '';
@@ -400,6 +557,35 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
           <Star className={`h-3.5 w-3.5 ${i <= value ? 'fill-amber-400 text-amber-400' : (isDark ? 'text-slate-600' : 'text-slate-300')}`} />
         </button>
       ))}
+    </div>
+  );
+
+  const ProfileSignals = ({ row }: { row: RestoredData }) => (
+    <div className="flex flex-wrap items-center gap-1">
+      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[9px] font-medium ${workflowColors[row.workflowStatus || 'New']}`}>
+        <Briefcase className="h-2.5 w-2.5" /> {row.workflowStatus || 'New'}
+      </span>
+      {row.profileNiche && (
+        <span
+          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium ${isDark ? 'bg-emerald-500/15 text-emerald-300' : 'bg-emerald-50 text-emerald-700'}`}
+          title={`${row.audienceHint || 'Needs manual review'} · ${Math.round((row.classificationConfidence || 0) * 100)}% confidence`}
+        >
+          <Filter className="h-2.5 w-2.5" /> {row.profileNiche}
+        </span>
+      )}
+      {row.isWatchlisted && (
+        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium ${isDark ? 'bg-violet-500/15 text-violet-300' : 'bg-violet-50 text-violet-700'}`}>
+          <Bell className="h-2.5 w-2.5" /> Watchlist
+        </span>
+      )}
+      {isChangedRecently(row) && (
+        <button
+          onClick={() => setActiveChangeProfileId(row.id)}
+          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium ${isDark ? 'bg-rose-500/15 text-rose-300 hover:bg-rose-500/25' : 'bg-rose-50 text-rose-700 hover:bg-rose-100'}`}
+        >
+          <History className="h-2.5 w-2.5" /> Changed
+        </button>
+      )}
     </div>
   );
 
@@ -455,32 +641,126 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
     );
   };
 
+  const clearQuickFilters = () => {
+    setSearchTerm('');
+    setFilterPlatform('all');
+    setFilterTier('all');
+    setFilterCampaign('all');
+    setFilterHasContact('all');
+    setFilterLifecycle('all');
+    setFilterWorkflowStatus('all');
+    setFilterNiche('all');
+  };
+
+  const applyStatFilter = (filter: 'all' | 'tiktok' | 'facebook' | 'phone' | 'email' | 'watchlist' | 'duplicates') => {
+    clearQuickFilters();
+    if (filter === 'tiktok') setFilterPlatform('TikTok');
+    if (filter === 'facebook') setFilterPlatform('Facebook');
+    if (filter === 'phone') setFilterHasContact('phone');
+    if (filter === 'email') setFilterHasContact('email');
+    if (filter === 'watchlist') setFilterLifecycle('watchlist');
+    if (filter === 'duplicates') setFilterLifecycle('duplicates');
+  };
+
   const statItems = [
-    { label: 'Tổng profiles', value: stats.total, icon: Users, color: textP, bg: isDark ? 'bg-white/5' : 'bg-white' },
-    { label: 'TikTok', value: stats.tiktok, icon: Globe, color: isDark ? 'text-slate-300' : 'text-slate-600', bg: isDark ? 'bg-slate-700/30' : 'bg-slate-50' },
-    { label: 'Facebook', value: stats.facebook, icon: Globe, color: isDark ? 'text-blue-300' : 'text-blue-600', bg: isDark ? 'bg-blue-900/20' : 'bg-blue-50' },
-    { label: 'Có SĐT', value: stats.hasPhone, icon: Phone, color: isDark ? 'text-emerald-300' : 'text-emerald-600', bg: isDark ? 'bg-emerald-900/20' : 'bg-emerald-50' },
-    { label: 'Có Email', value: stats.hasEmail, icon: Mail, color: isDark ? 'text-amber-300' : 'text-amber-600', bg: isDark ? 'bg-amber-900/20' : 'bg-amber-50' },
-    { label: 'Đã đánh giá', value: stats.rated, icon: Star, color: isDark ? 'text-violet-300' : 'text-violet-600', bg: isDark ? 'bg-violet-900/20' : 'bg-violet-50' },
+    { label: 'Tổng profiles', value: stats.total, icon: Users, color: textP, bg: isDark ? 'bg-white/5' : 'bg-white', filter: 'all' as const, active: filterPlatform === 'all' && filterHasContact === 'all' && filterLifecycle === 'all' && filterTier === 'all' && filterCampaign === 'all' && filterWorkflowStatus === 'all' && filterNiche === 'all' && !searchTerm },
+    { label: 'TikTok', value: stats.tiktok, icon: Globe, color: isDark ? 'text-slate-300' : 'text-slate-600', bg: isDark ? 'bg-slate-700/30' : 'bg-slate-50', filter: 'tiktok' as const, active: filterPlatform === 'TikTok' },
+    { label: 'Facebook', value: stats.facebook, icon: Globe, color: isDark ? 'text-blue-300' : 'text-blue-600', bg: isDark ? 'bg-blue-900/20' : 'bg-blue-50', filter: 'facebook' as const, active: filterPlatform === 'Facebook' },
+    { label: 'Có SĐT', value: stats.hasPhone, icon: Phone, color: isDark ? 'text-emerald-300' : 'text-emerald-600', bg: isDark ? 'bg-emerald-900/20' : 'bg-emerald-50', filter: 'phone' as const, active: filterHasContact === 'phone' },
+    { label: 'Có Email', value: stats.hasEmail, icon: Mail, color: isDark ? 'text-amber-300' : 'text-amber-600', bg: isDark ? 'bg-amber-900/20' : 'bg-amber-50', filter: 'email' as const, active: filterHasContact === 'email' },
+    { label: 'Watchlist', value: stats.watchlisted, icon: Bell, color: isDark ? 'text-violet-300' : 'text-violet-600', bg: isDark ? 'bg-violet-900/20' : 'bg-violet-50', filter: 'watchlist' as const, active: filterLifecycle === 'watchlist' },
+    { label: 'Duplicate groups', value: duplicateGroups.length, icon: CopyX, color: isDark ? 'text-rose-300' : 'text-rose-600', bg: isDark ? 'bg-rose-900/20' : 'bg-rose-50', filter: 'duplicates' as const, active: filterLifecycle === 'duplicates' },
   ];
+
+  const activeChangeProfile = activeChangeProfileId ? data.find(row => row.id === activeChangeProfileId) : null;
 
   return (
     <div className="space-y-5">
       {/* Dashboard Stats */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {statItems.map((stat) => (
-          <div key={stat.label} className={`stat-card rounded-xl p-4 border ${stat.bg} ${borderC}`}>
+          <button
+            key={stat.label}
+            type="button"
+            onClick={() => applyStatFilter(stat.filter)}
+            className={`stat-card rounded-xl p-4 border text-left transition-all ${stat.bg} ${borderC} hover:-translate-y-0.5 hover:shadow-sm ${stat.active ? 'ring-2 ring-violet-500/40' : ''}`}
+          >
             <div className="flex items-center gap-2 mb-1">
               <stat.icon className={`h-3.5 w-3.5 ${stat.color}`} />
               <span className={`text-[11px] ${textS}`}>{stat.label}</span>
             </div>
             <div className={`text-2xl font-bold ${stat.color}`}>{stat.value}</div>
-          </div>
+          </button>
         ))}
       </div>
 
-      {/* Overview Dashboard */}
-      <DashboardStats data={data} theme={theme || 'light'} />
+      {/* Workflow Pipeline */}
+      <div className={`rounded-xl border p-4 ${cardBg}`}>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+          <div>
+            <h3 className={`text-sm font-semibold ${textP}`}>Workflow pipeline</h3>
+            <p className={`text-xs ${textM}`}>Theo dõi profile từ New đến Closed để team biết bước tiếp theo.</p>
+          </div>
+          {filterWorkflowStatus !== 'all' && (
+            <button onClick={() => setFilterWorkflowStatus('all')} className={`text-xs ${isDark ? 'text-violet-300 hover:text-violet-200' : 'text-violet-600 hover:text-violet-500'}`}>
+              Xem tất cả
+            </button>
+          )}
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
+          {WORKFLOW_STATUSES.map(status => (
+            <button
+              key={status}
+              onClick={() => setFilterWorkflowStatus(status)}
+              className={`rounded-xl border px-3 py-2 text-left transition-colors ${workflowColors[status]} ${filterWorkflowStatus === status ? 'ring-2 ring-violet-500/40' : ''}`}
+            >
+              <div className="text-xs font-semibold">{status}</div>
+              <div className="mt-1 text-xl font-bold">{workflowCounts[status]}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {duplicateGroups.length > 0 && (
+        <div className={`rounded-xl border p-4 ${cardBg}`}>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+            <div>
+              <h3 className={`text-sm font-semibold ${textP}`}>Duplicate identity resolver</h3>
+              <p className={`text-xs ${textM}`}>Phát hiện trùng theo URL/handle/contact/bio link/tên. Gộp sẽ giữ profile nhiều CRM data nhất.</p>
+            </div>
+            <button
+              onClick={removeDuplicates}
+              className={`inline-flex items-center px-3 py-1.5 text-xs font-medium border rounded-lg transition-colors ${isDark ? 'border-amber-500/30 text-amber-300 hover:bg-amber-500/10' : 'border-amber-200 text-amber-700 hover:bg-amber-50'}`}
+            >
+              <CopyX className="h-3.5 w-3.5 mr-1" />
+              Merge all ({duplicateGroups.length})
+            </button>
+          </div>
+          <div className="space-y-2">
+            {duplicateGroups.slice(0, 3).map(group => (
+              <div key={group.id} className={`rounded-xl border px-3 py-2 ${isDark ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200 bg-slate-50'}`}>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div>
+                    <div className={`text-xs font-semibold ${textP}`}>{group.reason}</div>
+                    <div className={`text-[11px] ${textM}`}>
+                      {group.profiles.map(profile => profile.nickname || profile.url).join(' · ')}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => mergeOneDuplicateGroup(group.profiles.map(profile => profile.id))}
+                    className={`text-xs font-medium ${isDark ? 'text-violet-300 hover:text-violet-200' : 'text-violet-600 hover:text-violet-500'}`}
+                  >
+                    Merge group
+                  </button>
+                </div>
+              </div>
+            ))}
+            {duplicateGroups.length > 3 && (
+              <p className={`text-[11px] ${textM}`}>Còn {duplicateGroups.length - 3} nhóm khác. Dùng Merge all để gộp toàn bộ.</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Main CRM Card */}
       <div className={`rounded-xl border overflow-hidden ${cardBg}`}>
@@ -507,6 +787,12 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
                 <button onClick={refreshFromSheet} disabled={isRefreshing} className={`inline-flex items-center px-3 py-1.5 text-xs font-medium border rounded-lg transition-colors disabled:opacity-40 ${isDark ? 'border-white/10 text-blue-400 hover:bg-blue-500/10' : 'border-slate-200 text-blue-600 hover:bg-blue-50'}`}>
                   {isRefreshing ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}
                   {isRefreshing ? 'Đang tải...' : 'Sync Sheet'}
+                </button>
+              )}
+
+              {onRefreshProfiles && (
+                <button onClick={refreshWatchlist} disabled={!data.some(row => row.isWatchlisted)} className={`inline-flex items-center px-3 py-1.5 text-xs font-medium border rounded-lg transition-colors disabled:opacity-40 ${isDark ? 'border-white/10 text-violet-400 hover:bg-violet-500/10' : 'border-slate-200 text-violet-600 hover:bg-violet-50'}`}>
+                  <Bell className="h-3.5 w-3.5 mr-1" /> Refresh Watchlist
                 </button>
               )}
 
@@ -549,6 +835,16 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
               <option value="all">Tất cả Campaign</option>
               {dynamicCampaigns.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
+            <select value={filterWorkflowStatus} onChange={(e) => setFilterWorkflowStatus(e.target.value)}
+              className={`px-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-violet-500/50 cursor-pointer ${inputBg}`}>
+              <option value="all">Tất cả Workflow</option>
+              {WORKFLOW_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
+            </select>
+            <select value={filterNiche} onChange={(e) => setFilterNiche(e.target.value)}
+              className={`px-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-violet-500/50 cursor-pointer ${inputBg}`}>
+              <option value="all">Tất cả Niche</option>
+              {dynamicNiches.map(niche => <option key={niche} value={niche}>{niche}</option>)}
+            </select>
             <select value={filterHasContact} onChange={(e) => setFilterHasContact(e.target.value)}
               className={`px-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-violet-500/50 cursor-pointer ${inputBg}`}>
               <option value="all">Tất cả Liên hệ</option>
@@ -556,11 +852,23 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
               <option value="email">Có Email</option>
               <option value="both">Có cả SĐT & Email</option>
             </select>
+            <select value={filterLifecycle} onChange={(e) => setFilterLifecycle(e.target.value as LifecycleFilter)}
+              className={`px-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-violet-500/50 cursor-pointer ${inputBg}`}>
+              <option value="all">Tất cả trạng thái CRM</option>
+              <option value="watchlist">Watchlist</option>
+              <option value="changed_recently">Changed recently</option>
+              <option value="duplicates">Duplicate profiles</option>
+            </select>
 
             {selectedIds.size > 0 && (
               <div className={`flex items-center gap-2 ml-2 pl-2 border-l ${borderC}`}>
                 <span className={`text-xs ${isDark ? 'text-violet-400' : 'text-violet-600'}`}>{selectedIds.size} đã chọn</span>
                 <button onClick={bulkDelete} className="text-xs text-red-400 hover:text-red-300">Xóa</button>
+                <button onClick={() => bulkSetWatchlist(true)} className={`text-xs ${isDark ? 'text-violet-400 hover:text-violet-300' : 'text-violet-600 hover:text-violet-500'}`}>Watchlist</button>
+                <button onClick={() => bulkSetWatchlist(false)} className={`text-xs ${isDark ? 'text-slate-400 hover:text-slate-300' : 'text-slate-500 hover:text-slate-700'}`}>Bỏ watch</button>
+                {onRefreshProfiles && (
+                  <button onClick={refreshSelected} className={`text-xs ${isDark ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-500'}`}>Refresh selected</button>
+                )}
                 {selectedIds.size >= 2 && selectedIds.size <= 5 && (
                   <button onClick={() => setShowCompareModal(true)} className={`text-xs ${isDark ? 'text-violet-400 hover:text-violet-300' : 'text-violet-600 hover:text-violet-500'}`}>So sánh</button>
                 )}
@@ -581,7 +889,14 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
                           <div className={`text-[10px] font-medium px-3 py-1 ${textS}`}>Gán Campaign</div>
                           {dynamicCampaigns.map(cam => (
                             <button key={cam} onClick={() => { bulkAssignCampaign(cam); setShowBulkActions(false); }}
-                              className={`w-full text-left px-3 py-1 text-xs ${dropItemHover} ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{cam}</button>
+                            className={`w-full text-left px-3 py-1 text-xs ${dropItemHover} ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{cam}</button>
+                          ))}
+                        </div>
+                        <div className={`border-l ${borderC} pl-2`}>
+                          <div className={`text-[10px] font-medium px-3 py-1 ${textS}`}>Workflow</div>
+                          {WORKFLOW_STATUSES.map(status => (
+                            <button key={status} onClick={() => { bulkSetWorkflowStatus(status); setShowBulkActions(false); }}
+                              className={`w-full text-left px-3 py-1 text-xs ${dropItemHover} ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{status}</button>
                           ))}
                         </div>
                       </div>
@@ -629,15 +944,33 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
                       </span>
                       {row.followers && <span className={`text-[11px] ${textP} font-medium`}>{formatFollowers(row.followers)}</span>}
                     </div>
+                    <div className="mt-1">
+                      <ProfileSignals row={row} />
+                    </div>
                   </div>
-                  <button onClick={() => deleteRow(row.id)} className={`opacity-0 group-hover:opacity-100 ${isDark ? 'text-slate-500 hover:text-red-400' : 'text-slate-300 hover:text-red-500'} transition-all`}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                    <button onClick={() => toggleWatchlist(row)} className={`${row.isWatchlisted ? (isDark ? 'text-violet-300' : 'text-violet-600') : (isDark ? 'text-slate-500 hover:text-violet-300' : 'text-slate-300 hover:text-violet-600')}`}>
+                      {row.isWatchlisted ? <BellOff className="h-3.5 w-3.5" /> : <Bell className="h-3.5 w-3.5" />}
+                    </button>
+                    <button onClick={() => deleteRow(row.id)} className={`${isDark ? 'text-slate-500 hover:text-red-400' : 'text-slate-300 hover:text-red-500'} transition-all`}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </div>
                 <StarRating value={row.rating || 0} onChange={(v) => updateRow(row.id, 'rating', v)} />
+                <div className="mt-3">
+                  <select
+                    value={row.workflowStatus || 'New'}
+                    onChange={(e) => updateWorkflowStatus(row, e.target.value as WorkflowStatus)}
+                    className={`w-full px-2 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-violet-500/50 ${inputBg}`}
+                  >
+                    {WORKFLOW_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
+                  </select>
+                </div>
                 <div className="mt-2 space-y-1">
                   {row.phone && row.phone !== 'N/A' && <div className={`text-xs flex items-center gap-1 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}><Phone className="h-3 w-3" /> {row.phone}</div>}
                   {row.email && row.email !== 'N/A' && <div className={`text-xs ${textS} flex items-center gap-1 truncate`}><Mail className="h-3 w-3 shrink-0" /> {row.email}</div>}
+                  {row.audienceHint && <div className={`text-[11px] ${textM} line-clamp-2`} title={row.audienceHint}>{row.audienceHint}</div>}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1">
                   {row.tier.map(t => <span key={t} className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${tagColors.violet}`}>{t}</span>)}
@@ -652,6 +985,11 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
                   <button onClick={() => setActiveRateProfileId(row.id)} className={`text-[10px] flex items-center gap-1 ${isDark ? 'text-amber-400 hover:text-amber-300' : 'text-amber-600 hover:text-amber-500'}`}>
                     <History className="h-3 w-3" /> Báo giá {row.rateHistory?.length ? `(${row.rateHistory.length})` : ''}
                   </button>
+                  {row.changeHistory && row.changeHistory.length > 0 && (
+                    <button onClick={() => setActiveChangeProfileId(row.id)} className={`text-[10px] flex items-center gap-1 ${isDark ? 'text-rose-400 hover:text-rose-300' : 'text-rose-600 hover:text-rose-500'}`}>
+                      <Eye className="h-3 w-3" /> Changes
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -681,6 +1019,8 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
                   <th className="px-3 py-3 font-medium w-28">SĐT</th>
                   <th className="px-3 py-3 font-medium w-40">Email</th>
                   <th className="px-3 py-3 font-medium w-28">Link Bio</th>
+                  <th className="px-3 py-3 font-medium min-w-[130px]">Workflow</th>
+                  <th className="px-3 py-3 font-medium min-w-[150px]">Classification</th>
                   <th className="px-3 py-3 font-medium w-20 text-center cursor-pointer" onClick={() => handleSort('rating')}>
                     <div className="flex items-center justify-center">Rating <SortIcon field="rating" /></div>
                   </th>
@@ -695,13 +1035,17 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
               </thead>
               <tbody className={`divide-y ${divideC}`}>
                 {filteredAndSortedData.length === 0 ? (
-                  <tr><td colSpan={15} className={`px-4 py-12 text-center ${textM}`}>
+                  <tr><td colSpan={21} className={`px-4 py-12 text-center ${textM}`}>
                     <Users className="h-8 w-8 mx-auto mb-2 opacity-30" /><p>Chưa có dữ liệu lưu trữ.</p>
                   </td></tr>
                 ) : filteredAndSortedData.map((row, index) => (
-                  <tr key={row.id} className={`${rowHover} transition-colors`}>
+                  <tr
+                    key={row.id}
+                    onClick={(event) => handleProfileRowClick(event, row.id)}
+                    className={`${rowHover} ${selectedIds.has(row.id) ? (isDark ? 'bg-violet-500/10' : 'bg-violet-50') : ''} cursor-pointer transition-colors`}
+                  >
                     <td className="px-3 py-3 text-center">
-                      <input type="checkbox" checked={selectedIds.has(row.id)} onChange={() => toggleSelect(row.id)} className="rounded" />
+                      <input type="checkbox" checked={selectedIds.has(row.id)} onChange={() => toggleSelect(row.id)} onClick={(event) => event.stopPropagation()} className="rounded" />
                     </td>
                     <td className={`px-3 py-3 text-center ${textM} text-xs`}>{index + 1}</td>
                     <td className={`px-3 py-3 ${textS} text-xs whitespace-nowrap`}>{row.saveDate}</td>
@@ -713,6 +1057,9 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
                     <td className="px-3 py-3">
                       <div className={`font-medium ${textP} truncate max-w-[11rem]`}>{row.nickname || '-'}</div>
                       <div className={`text-[11px] ${textM} truncate max-w-[11rem]`}>{row.channelId ? `@${row.channelId}` : '-'}</div>
+                      <div className="mt-1">
+                        <ProfileSignals row={row} />
+                      </div>
                       <div className="flex items-center gap-2 mt-0.5">
                         <a href={row.url} target="_blank" rel="noreferrer" className={`text-[10px] flex items-center gap-1 ${isDark ? 'text-violet-400 hover:text-violet-300' : 'text-violet-600 hover:text-violet-500'}`}>
                           <LinkIcon className="h-2.5 w-2.5 shrink-0" /> Link
@@ -720,6 +1067,11 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
                         <button onClick={() => setActiveRateProfileId(row.id)} className={`text-[10px] flex items-center gap-1 ${isDark ? 'text-amber-400 hover:text-amber-300' : 'text-amber-600 hover:text-amber-500'}`}>
                           <History className="h-2.5 w-2.5" /> Thêm giá {row.rateHistory?.length ? `(${row.rateHistory.length})` : ''}
                         </button>
+                        {row.changeHistory && row.changeHistory.length > 0 && (
+                          <button onClick={() => setActiveChangeProfileId(row.id)} className={`text-[10px] flex items-center gap-1 ${isDark ? 'text-rose-400 hover:text-rose-300' : 'text-rose-600 hover:text-rose-500'}`}>
+                            <Eye className="h-2.5 w-2.5" /> Changes
+                          </button>
+                        )}
                       </div>
                     </td>
                     <td className={`px-3 py-3 text-right font-medium ${textP}`}>{formatFollowers(row.followers) || '-'}</td>
@@ -738,6 +1090,20 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
                           <LinkIcon className="h-3 w-3 shrink-0" /> Link
                         </a>
                       ) : '-'}
+                    </td>
+                    <td className="px-3 py-3">
+                      <select
+                        value={row.workflowStatus || 'New'}
+                        onChange={(e) => updateWorkflowStatus(row, e.target.value as WorkflowStatus)}
+                        className={`min-w-[120px] px-2 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-violet-500/50 ${inputBg}`}
+                      >
+                        {WORKFLOW_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
+                      </select>
+                    </td>
+                    <td className={`px-3 py-3 text-xs ${textS}`}>
+                      <div className={`font-medium ${textP}`}>{row.profileNiche || 'Unclassified'}</div>
+                      <div className="truncate max-w-[10rem]" title={row.audienceHint}>{row.audienceHint || 'Needs manual review'}</div>
+                      <div className={`text-[10px] ${textM}`}>{Math.round((row.classificationConfidence || 0) * 100)}% confidence</div>
                     </td>
                     <td className="px-3 py-3 text-center">
                       <StarRating value={row.rating || 0} onChange={(v) => updateRow(row.id, 'rating', v)} />
@@ -781,7 +1147,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
                           <div className="flex flex-col gap-1">
                             <div className="flex gap-1 flex-wrap mb-1.5">
                               {NOTE_TEMPLATES.map(tmpl => (
-                                <button key={tmpl} onClick={() => { setNoteText(tmpl); addNote(row.id); }} className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${isDark ? 'border-white/10 text-slate-300 hover:bg-violet-500/20 hover:text-violet-300 hover:border-violet-500/30' : 'border-slate-200 text-slate-600 hover:bg-violet-50 hover:text-violet-600 hover:border-violet-200'}`}>
+                                <button key={tmpl} onClick={() => addNote(row.id, tmpl)} className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${isDark ? 'border-white/10 text-slate-300 hover:bg-violet-500/20 hover:text-violet-300 hover:border-violet-500/30' : 'border-slate-200 text-slate-600 hover:bg-violet-50 hover:text-violet-600 hover:border-violet-200'}`}>
                                   {tmpl}
                                 </button>
                               ))}
@@ -805,9 +1171,14 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
                       </div>
                     </td>
                     <td className="px-3 py-3 text-center">
-                      <button onClick={() => deleteRow(row.id)} className={`${isDark ? 'text-slate-600 hover:text-red-400' : 'text-slate-300 hover:text-red-500'} transition-colors`}>
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        <button onClick={() => toggleWatchlist(row)} className={`${row.isWatchlisted ? (isDark ? 'text-violet-300 hover:text-violet-200' : 'text-violet-600 hover:text-violet-500') : (isDark ? 'text-slate-600 hover:text-violet-300' : 'text-slate-300 hover:text-violet-500')} transition-colors`} title={row.isWatchlisted ? 'Bỏ Watchlist' : 'Thêm Watchlist'}>
+                          {row.isWatchlisted ? <BellOff className="h-3.5 w-3.5" /> : <Bell className="h-3.5 w-3.5" />}
+                        </button>
+                        <button onClick={() => deleteRow(row.id)} className={`${isDark ? 'text-slate-600 hover:text-red-400' : 'text-slate-300 hover:text-red-500'} transition-colors`}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -823,6 +1194,50 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme }: ScoutCRMProp
         profiles={data.filter(p => selectedIds.has(p.id))} 
         theme={theme} 
       />
+
+      {activeChangeProfile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+          <div className={`${isDark ? 'bg-black/60' : 'bg-slate-900/40'} absolute inset-0 backdrop-blur-sm`} onClick={() => setActiveChangeProfileId(null)} />
+          <div className={`relative w-full max-w-3xl max-h-[85vh] rounded-2xl border shadow-2xl overflow-hidden ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+            <div className={`px-5 py-4 border-b ${borderC} flex items-center justify-between`}>
+              <div>
+                <h3 className={`text-base font-semibold ${textP}`}>Change history</h3>
+                <p className={`text-xs ${textM}`}>{activeChangeProfile.nickname || activeChangeProfile.url}</p>
+              </div>
+              <button onClick={() => setActiveChangeProfileId(null)} className={`p-2 rounded-xl transition-colors ${isDark ? 'text-slate-400 hover:text-white hover:bg-white/10' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'}`}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-5 overflow-y-auto max-h-[70vh] space-y-4">
+              {!activeChangeProfile.changeHistory || activeChangeProfile.changeHistory.length === 0 ? (
+                <p className={`text-sm ${textM}`}>Chưa có thay đổi nào được ghi nhận.</p>
+              ) : activeChangeProfile.changeHistory.map(record => (
+                <div key={record.id} className={`rounded-xl border p-4 ${isDark ? 'border-white/10 bg-white/[0.03]' : 'border-slate-200 bg-slate-50'}`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 mb-3">
+                    <div className={`text-sm font-medium ${textP}`}>
+                      {new Date(record.detectedAt).toLocaleString('vi-VN')}
+                    </div>
+                    <span className={`text-[10px] uppercase tracking-wide ${isDark ? 'text-rose-300' : 'text-rose-600'}`}>{record.source}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {record.changes.map(change => (
+                      <div key={`${record.id}-${change.field}`} className={`grid grid-cols-1 md:grid-cols-[120px_1fr_1fr] gap-2 text-xs ${textS}`}>
+                        <div className={`font-medium ${textP}`}>{change.label}</div>
+                        <div className={`rounded-lg px-2 py-1 ${isDark ? 'bg-red-500/10 text-red-200' : 'bg-red-50 text-red-700'}`}>
+                          Cũ: {change.oldValue ?? '-'}
+                        </div>
+                        <div className={`rounded-lg px-2 py-1 ${isDark ? 'bg-emerald-500/10 text-emerald-200' : 'bg-emerald-50 text-emerald-700'}`}>
+                          Mới: {change.newValue ?? '-'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <RateHistoryModal
         isOpen={!!activeRateProfileId}

@@ -3,33 +3,428 @@ import express from "express";
 import * as cheerio from "cheerio";
 import path from "path";
 import { fileURLToPath } from "url";
+import { normalizeContact } from './src/lib/contactParser';
+
+let stealthBrowser: any = null;
+let puppeteerInstance: any = null;
+async function getStealthBrowser() {
+  if (!puppeteerInstance) {
+    const [{ default: puppeteer }, { default: StealthPlugin }] = await Promise.all([
+      import('puppeteer-extra'),
+      import('puppeteer-extra-plugin-stealth'),
+    ]);
+    puppeteer.use(StealthPlugin());
+    puppeteerInstance = puppeteer;
+  }
+
+  if (!stealthBrowser) {
+    stealthBrowser = await puppeteerInstance.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
+  }
+
+  return stealthBrowser;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Helper function to extract contact info from bio
-function extractContact(text: string) {
-  let phone = '';
-  let email = '';
-  if (!text) return { phone, email };
-  
-  // Extract email
-  const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/i;
-  const emailMatch = text.match(emailRegex);
-  if (emailMatch) email = emailMatch[1];
-  
-  // Extract phone (VN format: 03, 05, 07, 08, 09) + 8 digits, allow dots, spaces
-  const phoneRegex = /((?:\+|00)?84|0)\s*[3|5|7|8|9](?:[\s\.]*\d){8}\b/ig;
-  const phoneMatch = text.match(phoneRegex);
-  if (phoneMatch && phoneMatch.length > 0) {
-     let cleanPhone = phoneMatch[0].replace(/[^\d]/g, '');
-     if (cleanPhone.startsWith('84')) cleanPhone = '0' + cleanPhone.substring(2);
-     if (cleanPhone.length >= 10) {
-        phone = cleanPhone.substring(0, 10);
-     }
+type RapidApiKeyState = {
+  key: string;
+  cooldownUntil: number;
+  lastUsedAt: number;
+  successCount: number;
+  failureCount: number;
+  quotaHitCount: number;
+};
+
+type RapidApiRequestSuccess<T = any> = { ok: true; data: T };
+type RapidApiRequestFailure = {
+  ok: false;
+  status: number;
+  error: string;
+  quotaExceeded: boolean;
+  retryAfterMs?: number | null;
+};
+type RapidApiRequestResult<T = any> = RapidApiRequestSuccess<T> | RapidApiRequestFailure;
+type ScrapeCacheEntry<T = any> = {
+  data: T;
+  cachedAt: number;
+  expiresAt: number;
+};
+
+const RAPIDAPI_HOST = 'tiktok-scraper7.p.rapidapi.com';
+const RAPIDAPI_DEFAULT_COOLDOWN_MS = Number(process.env.RAPIDAPI_COOLDOWN_MS || 15 * 60 * 1000);
+const SCRAPE_CACHE_TTL_MS = Number(process.env.SCRAPE_CACHE_TTL_MS || 6 * 60 * 60 * 1000);
+const isServerlessRuntime = Boolean(
+  process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME,
+);
+const rapidApiKeyPool = new Map<string, RapidApiKeyState>();
+const scrapeCache = new Map<string, ScrapeCacheEntry>();
+let rapidApiNextKeyIndex = 0;
+
+function createEmptyTikTokMetrics(partialWarnings: string[] = []) {
+  return {
+    averageView: 0,
+    averageEngagement: 0,
+    totalLikes: 0,
+    totalComments: 0,
+    totalShares: 0,
+    totalSaves: 0,
+    videoCount: 0,
+    partialWarnings,
+  };
+}
+
+function normalizeCacheUrl(url: string) {
+  try {
+    const parsed = new URL(url.startsWith('http') ? url : `https://${url}`);
+    parsed.hash = '';
+    parsed.search = '';
+    return parsed.toString().replace(/\/$/, '').toLowerCase();
+  } catch {
+    return url.trim().replace(/\/$/, '').toLowerCase();
   }
-  
-  return { phone, email };
+}
+
+function createScrapeCacheKey(platform: 'tiktok' | 'facebook', url: string, variant = 'default') {
+  return `${platform}:${variant}:${normalizeCacheUrl(url)}`;
+}
+
+function getVisiblePageText($: cheerio.CheerioAPI) {
+  const body = $('body').clone();
+  body.find('script, style, noscript, template, svg').remove();
+  return body.text().replace(/\s+/g, ' ').trim();
+}
+
+function getFacebookExternalLinks($: cheerio.CheerioAPI, baseUrl: string) {
+  const blockedHosts = new Set([
+    'facebook.com',
+    'fb.com',
+    'l.facebook.com',
+    'm.facebook.com',
+    'www.facebook.com',
+    'messenger.com',
+    'm.me',
+    'instagram.com',
+    'www.instagram.com',
+    'tiktok.com',
+    'www.tiktok.com',
+  ]);
+
+  const links = $('a[href]')
+    .map((_, element) => $(element).attr('href') || '')
+    .get()
+    .map((rawHref) => {
+      try {
+        const parsed = new URL(rawHref, baseUrl);
+        const normalizedHost = parsed.hostname.replace(/^www\./, '');
+        if ((normalizedHost.endsWith('facebook.com') || normalizedHost === 'fb.com') && parsed.pathname === '/l.php') {
+          return parsed.searchParams.get('u') || '';
+        }
+        return parsed.toString();
+      } catch {
+        return '';
+      }
+    })
+    .filter((link, index, list) => {
+      if (!link || list.indexOf(link) !== index) return false;
+      try {
+        const host = new URL(link).hostname.replace(/^www\./, '');
+        return !blockedHosts.has(host);
+      } catch {
+        return false;
+      }
+    });
+
+  return links;
+}
+
+function getCachedScrape<T>(cacheKey: string): (T & { cacheHit: true; cacheSource: 'server'; cachedAt: string }) | null {
+  const entry = scrapeCache.get(cacheKey);
+  if (!entry) return null;
+
+  if (entry.expiresAt <= Date.now()) {
+    scrapeCache.delete(cacheKey);
+    return null;
+  }
+
+  return {
+    ...entry.data,
+    cacheHit: true,
+    cacheSource: 'server',
+    cachedAt: new Date(entry.cachedAt).toISOString(),
+  };
+}
+
+function setCachedScrape(cacheKey: string, data: any) {
+  const cachedAt = Date.now();
+  scrapeCache.set(cacheKey, {
+    data,
+    cachedAt,
+    expiresAt: cachedAt + SCRAPE_CACHE_TTL_MS,
+  });
+}
+
+function maskApiKey(key: string) {
+  return key.length <= 6 ? key : `...${key.slice(-6)}`;
+}
+
+function formatDurationMs(ms: number) {
+  const totalMinutes = Math.max(1, Math.ceil(ms / 60000));
+  if (totalMinutes >= 60) {
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return minutes === 0 ? `${hours} giờ` : `${hours} giờ ${minutes} phút`;
+  }
+  return `${totalMinutes} phút`;
+}
+
+function parseRapidApiKeys(rawKeys: string | string[] | undefined) {
+  const joined = Array.isArray(rawKeys) ? rawKeys.join(',') : rawKeys || '';
+  return [
+    ...new Set(
+      joined
+        .split(/[\n,;]+/)
+        .map((key) => key.trim())
+        .filter((key) => key && key !== 'YOUR_RAPIDAPI_KEY'),
+    ),
+  ];
+}
+
+function getRapidApiKeyState(key: string) {
+  let keyState = rapidApiKeyPool.get(key);
+  if (!keyState) {
+    keyState = {
+      key,
+      cooldownUntil: 0,
+      lastUsedAt: 0,
+      successCount: 0,
+      failureCount: 0,
+      quotaHitCount: 0,
+    };
+    rapidApiKeyPool.set(key, keyState);
+  }
+  return keyState;
+}
+
+function advanceRapidApiCursor(apiKeys: string[], key: string) {
+  const currentIndex = apiKeys.indexOf(key);
+  if (currentIndex !== -1) {
+    rapidApiNextKeyIndex = (currentIndex + 1) % apiKeys.length;
+  }
+}
+
+function markRapidApiSuccess(apiKeys: string[], key: string) {
+  const keyState = getRapidApiKeyState(key);
+  keyState.lastUsedAt = Date.now();
+  keyState.successCount += 1;
+  keyState.cooldownUntil = 0;
+  advanceRapidApiCursor(apiKeys, key);
+}
+
+function markRapidApiFailure(apiKeys: string[], key: string) {
+  const keyState = getRapidApiKeyState(key);
+  keyState.lastUsedAt = Date.now();
+  keyState.failureCount += 1;
+  advanceRapidApiCursor(apiKeys, key);
+}
+
+function markRapidApiQuota(apiKeys: string[], key: string, retryAfterMs?: number | null) {
+  const keyState = getRapidApiKeyState(key);
+  keyState.lastUsedAt = Date.now();
+  keyState.quotaHitCount += 1;
+  keyState.cooldownUntil =
+    Date.now() + (retryAfterMs && retryAfterMs > 0 ? retryAfterMs : RAPIDAPI_DEFAULT_COOLDOWN_MS);
+  advanceRapidApiCursor(apiKeys, key);
+}
+
+function getRapidApiReadyKeys(apiKeys: string[]) {
+  if (apiKeys.length === 0) return [];
+
+  const now = Date.now();
+  const startIndex = rapidApiNextKeyIndex % apiKeys.length;
+  const rotatedKeys = [...apiKeys.slice(startIndex), ...apiKeys.slice(0, startIndex)];
+
+  return rotatedKeys
+    .map((key) => getRapidApiKeyState(key))
+    .filter((keyState) => keyState.cooldownUntil <= now);
+}
+
+function getNextRapidApiReadyInMs(apiKeys: string[]) {
+  const now = Date.now();
+  const remainingTimes = apiKeys
+    .map((key) => Math.max(0, getRapidApiKeyState(key).cooldownUntil - now))
+    .filter((ms) => ms > 0);
+
+  return remainingTimes.length > 0 ? Math.min(...remainingTimes) : 0;
+}
+
+function getRetryAfterMs(response: Response) {
+  const retryAfterMs = response.headers.get('retry-after-ms');
+  if (retryAfterMs) {
+    const parsed = Number(retryAfterMs);
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  }
+
+  const retryAfter = response.headers.get('retry-after');
+  if (!retryAfter) return null;
+
+  const seconds = Number(retryAfter);
+  if (!Number.isNaN(seconds) && seconds > 0) {
+    return seconds * 1000;
+  }
+
+  const retryDate = Date.parse(retryAfter);
+  if (!Number.isNaN(retryDate)) {
+    return Math.max(0, retryDate - Date.now());
+  }
+
+  return null;
+}
+
+function isRapidApiQuotaExceeded(status: number, errorText: string) {
+  return (
+    status === 429 ||
+    ((status === 403 || status === 400) &&
+      /(quota|too many|rate limit|limit reached|request limit|exceed)/i.test(errorText))
+  );
+}
+
+function isRapidApiRequestFailure<T>(result: RapidApiRequestResult<T>): result is RapidApiRequestFailure {
+  return result.ok === false;
+}
+
+async function requestRapidApiJson<T = any>(apiPath: string, apiKey: string): Promise<RapidApiRequestResult<T>> {
+  const response = await fetch(`https://${RAPIDAPI_HOST}${apiPath}`, {
+    method: 'GET',
+    headers: {
+      'x-rapidapi-key': apiKey,
+      'x-rapidapi-host': RAPIDAPI_HOST,
+    },
+  });
+
+  const rawText = await response.text();
+  let parsed: any = null;
+  try {
+    parsed = rawText ? JSON.parse(rawText) : null;
+  } catch {
+    parsed = null;
+  }
+
+  if (response.ok) {
+    return { ok: true, data: parsed as T };
+  }
+
+  const errorText =
+    (typeof parsed?.message === 'string' && parsed.message) ||
+    (typeof parsed?.error === 'string' && parsed.error) ||
+    (typeof parsed?.status_message === 'string' && parsed.status_message) ||
+    rawText.trim() ||
+    `RapidAPI HTTP ${response.status}`;
+
+  return {
+    ok: false,
+    status: response.status,
+    error: errorText,
+    quotaExceeded: isRapidApiQuotaExceeded(response.status, errorText),
+    retryAfterMs: getRetryAfterMs(response),
+  };
+}
+
+async function fetchTikTokMetricsFromRapidApi(
+  username: string,
+  apiKeys: string[],
+  preferredKey?: string,
+) {
+  const partialWarnings: string[] = [];
+  const keysInOrder = [
+    ...(preferredKey ? [preferredKey] : []),
+    ...getRapidApiReadyKeys(apiKeys).map((keyState) => keyState.key),
+  ].filter((key, index, list) => Boolean(key) && list.indexOf(key) === index);
+
+  for (const apiKey of keysInOrder) {
+    try {
+      const postsResult = await requestRapidApiJson<any>(
+        `/user/posts?unique_id=${encodeURIComponent(username)}&count=15`,
+        apiKey,
+      );
+
+      if (isRapidApiRequestFailure(postsResult)) {
+        const failedPostsResult = postsResult;
+        if (failedPostsResult.quotaExceeded) {
+          markRapidApiQuota(apiKeys, apiKey, failedPostsResult.retryAfterMs);
+          partialWarnings.push('Không lấy được TikTok video metrics vì key RapidAPI bị quota.');
+          console.warn(
+            `RapidAPI posts quota exceeded for key ${maskApiKey(apiKey)}, trying next key...`,
+          );
+          continue;
+        }
+
+        markRapidApiFailure(apiKeys, apiKey);
+        partialWarnings.push('Không lấy được TikTok video metrics từ RapidAPI posts endpoint.');
+        console.warn(
+          `RapidAPI posts request failed for key ${maskApiKey(apiKey)}:`,
+          failedPostsResult.error,
+        );
+        continue;
+      }
+
+      markRapidApiSuccess(apiKeys, apiKey);
+
+      const postsData = postsResult.data;
+      const videos: any[] = postsData?.data?.videos || postsData?.data || postsData?.videos || [];
+      if (videos.length === 0) {
+        return createEmptyTikTokMetrics();
+      }
+
+      const recentVideos = videos.slice(0, 15);
+      const sortedVideos = [...recentVideos].sort((a: any, b: any) => {
+        const viewsA = a.stats?.play_count || a.stats?.playCount || a.play_count || 0;
+        const viewsB = b.stats?.play_count || b.stats?.playCount || b.play_count || 0;
+        return viewsA - viewsB;
+      });
+      const targetVideos = sortedVideos.slice(0, 5);
+      const videoCount = targetVideos.length;
+
+      const totals = targetVideos.reduce(
+        (acc: any, video: any) => {
+          const stats = video.stats || video;
+          return {
+            views: acc.views + (stats.play_count || stats.playCount || video.play_count || 0),
+            likes: acc.likes + (stats.digg_count || stats.diggCount || video.digg_count || 0),
+            comments:
+              acc.comments + (stats.comment_count || stats.commentCount || video.comment_count || 0),
+            shares: acc.shares + (stats.share_count || stats.shareCount || video.share_count || 0),
+            saves: acc.saves + (stats.collect_count || stats.collectCount || video.collect_count || 0),
+          };
+        },
+        { views: 0, likes: 0, comments: 0, shares: 0, saves: 0 },
+      );
+
+      return {
+        averageView: videoCount > 0 ? Math.round(totals.views / videoCount) : 0,
+        averageEngagement:
+          videoCount > 0
+            ? Math.round((totals.likes + totals.comments + totals.shares + totals.saves) / videoCount)
+            : 0,
+        totalLikes: totals.likes,
+        totalComments: totals.comments,
+        totalShares: totals.shares,
+        totalSaves: totals.saves,
+        videoCount,
+      };
+    } catch (error: any) {
+      markRapidApiFailure(apiKeys, apiKey);
+      partialWarnings.push('Không lấy được TikTok video metrics do lỗi request posts.');
+      console.warn(`RapidAPI posts fetch crashed for key ${maskApiKey(apiKey)}:`, error.message);
+    }
+  }
+
+  return createEmptyTikTokMetrics([
+    ...new Set(partialWarnings.length > 0 ? partialWarnings : ['Không lấy được TikTok video metrics; vẫn giữ profile core.']),
+  ]);
 }
 
 export const app = express();
@@ -37,386 +432,267 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.use(express.json({ limit: '10mb' }));
 
-  // ============ TikTok Scrape API ============
+  // ============ TikTok Scrape API (RapidAPI Primary + HTML Fallback) ============
   app.post("/api/scrape", async (req, res) => {
     try {
-      const { url } = req.body;
+      const { url, fastMode = false, forceRefresh = false } = req.body;
       if (!url || !url.includes("tiktok.com")) {
         return res.status(400).json({ error: "Vui lòng nhập link TikTok hợp lệ" });
       }
 
       let fetchUrl = url.trim();
       if (!fetchUrl.startsWith('http')) fetchUrl = `https://${fetchUrl}`;
-
-      let html = '';
-      let responseOk = false;
-
-      // Try multiple user agents
-      const userAgents = [
-        {
-          "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.5",
-        },
-        {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.9",
-        },
-        {
-          "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.5",
-        }
-      ];
-
-      for (const headers of userAgents) {
-        if (responseOk) break;
-        try {
-          const response = await fetch(fetchUrl, { headers });
-          if (response.ok) {
-            html = await response.text();
-            responseOk = true;
-          }
-        } catch (e) {
-          // continue to next UA
-        }
+      const cacheKey = createScrapeCacheKey('tiktok', fetchUrl, fastMode ? 'fast' : 'full');
+      const cachedResult = !forceRefresh ? getCachedScrape(cacheKey) : null;
+      if (cachedResult) {
+        return res.json(cachedResult);
       }
 
-      if (!html) {
-        throw new Error('TikTok không phản hồi. Có thể đang bị chặn (Captcha).');
-      }
+      // Extract username from URL
+      const usernameMatch = fetchUrl.match(/@([^/?]+)/);
+      const username = usernameMatch ? usernameMatch[1] : '';
 
-      const $ = cheerio.load(html);
+      const headerRapidApiKeys = req.headers['x-rapidapi-key'];
+      const apiKeys = parseRapidApiKeys(
+        Array.isArray(headerRapidApiKeys) ? headerRapidApiKeys : headerRapidApiKeys || process.env.RAPIDAPI_KEY,
+      );
+      const canUsePuppeteerFallback =
+        !isServerlessRuntime || process.env.ENABLE_SERVERLESS_PUPPETEER === 'true';
+      const emptyMetrics = createEmptyTikTokMetrics();
 
-      // Parse __UNIVERSAL_DATA_FOR_REHYDRATION__
-      const scriptContent = $('#__UNIVERSAL_DATA_FOR_REHYDRATION__').html();
-      
-      if (scriptContent) {
-        try {
-          const data = JSON.parse(scriptContent);
-          const defaultScope = data?.__DEFAULT_SCOPE__;
-          const webappExtra = defaultScope?.['webapp.user-detail'];
-          const userInfo = webappExtra?.userInfo;
-          
-          if (userInfo && userInfo.user && userInfo.stats) {
-            const user = userInfo.user;
-            const stats = userInfo.stats;
+      let rapidApiQuotaBlocked = false;
+      let rapidApiNonQuotaError = false;
 
-            // Extract video stats for engagement metrics
-            let averageView = 0;
-            let averageEngagement = 0;
-            let totalLikes = 0;
-            let totalComments = 0;
-            let totalShares = 0;
-            let videoCount = 0;
+      // ====== METHOD 1: RapidAPI with Key Pool + Round Robin + Cooldown ======
+      if (username && apiKeys.length > 0) {
+        const readyKeys = getRapidApiReadyKeys(apiKeys);
 
-            // Try to get video list from ItemModule or ItemList
-            const itemModule = defaultScope?.['webapp.video-detail']?.itemInfo?.itemStruct;
-            const userPost = defaultScope?.['webapp.user-detail'];
-            
-            // Try multiple paths for video data
-            let videoItems: any[] = [];
-            
-            // Path 1: Check ItemModule in the data root
-            if (data?.ItemModule) {
-              videoItems = Object.values(data.ItemModule);
-            }
-            
-            // Path 2: Check in user-detail scope
-            if (videoItems.length === 0 && userPost?.userPost) {
-              videoItems = userPost.userPost;
-            }
+        if (readyKeys.length === 0) {
+          rapidApiQuotaBlocked = true;
+          console.warn(
+            `All RapidAPI keys are cooling down for @${username}. Next key ready in ${formatDurationMs(
+              getNextRapidApiReadyInMs(apiKeys),
+            )}.`,
+          );
+        } else {
+          for (const keyState of readyKeys) {
+            const rapidApiKey = keyState.key;
+            try {
+              const infoResult = await requestRapidApiJson<any>(
+                `/user/info?unique_id=${encodeURIComponent(username)}`,
+                rapidApiKey,
+              );
 
-            // Path 3: Look in the raw JSON for video items
-            if (videoItems.length === 0) {
-              try {
-                const videoRegex = /"playCount"\s*:\s*(\d+).*?"diggCount"\s*:\s*(\d+).*?"commentCount"\s*:\s*(\d+).*?"shareCount"\s*:\s*(\d+)/g;
-                let match;
-                const videoStats: Array<{views: number, likes: number, comments: number, shares: number}> = [];
-                const rawJson = scriptContent;
-                
-                while ((match = videoRegex.exec(rawJson)) !== null && videoStats.length < 15) {
-                  videoStats.push({
-                    views: parseInt(match[1]) || 0,
-                    likes: parseInt(match[2]) || 0,
-                    comments: parseInt(match[3]) || 0,
-                    shares: parseInt(match[4]) || 0,
-                  });
+              if (isRapidApiRequestFailure(infoResult)) {
+                const failedInfoResult = infoResult;
+                if (failedInfoResult.quotaExceeded) {
+                  rapidApiQuotaBlocked = true;
+                  markRapidApiQuota(apiKeys, rapidApiKey, failedInfoResult.retryAfterMs);
+                  console.warn(
+                    `RapidAPI info quota exceeded for key ${maskApiKey(rapidApiKey)}, trying next key...`,
+                  );
+                  continue;
                 }
-                
-                if (videoStats.length > 0) {
-                  const sortedStats = [...videoStats].sort((a, b) => a.views - b.views);
-                  const targetStats = sortedStats.slice(0, 5);
-                  
-                  videoCount = targetStats.length;
-                  const totals = targetStats.reduce((acc, v) => ({
-                    views: acc.views + v.views,
-                    likes: acc.likes + v.likes,
-                    comments: acc.comments + v.comments,
-                    shares: acc.shares + v.shares,
-                  }), { views: 0, likes: 0, comments: 0, shares: 0 });
-                  
-                  averageView = videoCount > 0 ? Math.round(totals.views / videoCount) : 0;
-                  totalLikes = totals.likes;
-                  totalComments = totals.comments;
-                  totalShares = totals.shares;
-                  averageEngagement = videoCount > 0 ? Math.round((totals.likes + totals.comments + totals.shares) / videoCount) : 0;
-                }
-              } catch(e) {
-                // Regex extraction failed, continue
+
+                rapidApiNonQuotaError = true;
+                markRapidApiFailure(apiKeys, rapidApiKey);
+                console.warn(
+                  `RapidAPI info failed for key ${maskApiKey(rapidApiKey)}:`,
+                  failedInfoResult.error,
+                );
+                continue;
               }
-            }
 
-            if (videoItems.length > 0) {
-              const recentItems = videoItems.slice(0, 15);
-              const sortedItems = [...recentItems].sort((a: any, b: any) => {
-                const viewsA = a.stats?.playCount || a.playCount || 0;
-                const viewsB = b.stats?.playCount || b.playCount || 0;
-                return viewsA - viewsB;
-              });
-              const targetItems = sortedItems.slice(0, 5);
-              videoCount = targetItems.length;
-              
-              const totals = targetItems.reduce((acc: any, video: any) => ({
-                views: acc.views + (video.stats?.playCount || video.playCount || 0),
-                likes: acc.likes + (video.stats?.diggCount || video.diggCount || 0),
-                comments: acc.comments + (video.stats?.commentCount || video.commentCount || 0),
-                shares: acc.shares + (video.stats?.shareCount || video.shareCount || 0),
-              }), { views: 0, likes: 0, comments: 0, shares: 0 });
-              
-              averageView = videoCount > 0 ? Math.round(totals.views / videoCount) : 0;
-              totalLikes = totals.likes;
-              totalComments = totals.comments;
-              totalShares = totals.shares;
-              averageEngagement = videoCount > 0 ? Math.round((totals.likes + totals.comments + totals.shares) / videoCount) : 0;
-            }
+              const infoData = infoResult.data;
+              const user = infoData?.data?.user || infoData?.user || {};
+              const stats = infoData?.data?.stats || infoData?.stats || {};
 
-            return res.json({
-              bio: user.signature || '',
-              channelId: user.uniqueId || '',
-              channelLink: `https://www.tiktok.com/@${user.uniqueId}`,
-              following: stats.followingCount || 0,
-              followers: stats.followerCount || 0,
-              likes: stats.heartCount || 0,
-              profilePic: user.avatarLarger || user.avatarMedium || user.avatarThumb || '',
-              nickname: user.nickname || '',
-              bioLink: user.bioLink?.link || '',
-              email: user.bioEmail || user.email || extractContact(user.signature || '').email,
-              phone: user.phone || extractContact(user.signature || '').phone,
-              // Engagement metrics
-              averageView,
-              averageEngagement,
-              totalLikes,
-              totalComments,
-              totalShares,
-              videoCount,
-            });
-          }
-        } catch (e) {
-          console.error("Error parsing __UNIVERSAL_DATA_FOR_REHYDRATION__", e);
-        }
-      }
-
-      // SIGI_STATE fallback
-      const sigiScript = $('#SIGI_STATE').html();
-      if (sigiScript) {
-        try {
-          const data = JSON.parse(sigiScript);
-          const userModule = data?.UserModule;
-          const users = userModule?.users;
-          const statsMod = userModule?.stats;
-          const itemModule = data?.ItemModule;
-          
-          if (users && statsMod) {
-            const username = Object.keys(users)[0];
-            const user = users[username];
-            const userStats = statsMod[username];
-
-            let averageView = 0, averageEngagement = 0, totalLikes = 0, totalComments = 0, totalShares = 0, videoCount = 0;
-
-            if (itemModule) {
-              const allVideos = Object.values(itemModule) as any[];
-              const recentVideos = allVideos.slice(0, 15);
-              const sortedVideos = [...recentVideos].sort((a: any, b: any) => {
-                const viewsA = a.stats?.playCount || 0;
-                const viewsB = b.stats?.playCount || 0;
-                return viewsA - viewsB;
-              });
-              const videos = sortedVideos.slice(0, 5);
-              
-              videoCount = videos.length;
-              if (videoCount > 0) {
-                const totals = videos.reduce((acc: any, v: any) => ({
-                  views: acc.views + (v.stats?.playCount || 0),
-                  likes: acc.likes + (v.stats?.diggCount || 0),
-                  comments: acc.comments + (v.stats?.commentCount || 0),
-                  shares: acc.shares + (v.stats?.shareCount || 0),
-                }), { views: 0, likes: 0, comments: 0, shares: 0 });
-
-                averageView = Math.round(totals.views / videoCount);
-                totalLikes = totals.likes;
-                totalComments = totals.comments;
-                totalShares = totals.shares;
-                averageEngagement = Math.round((totals.likes + totals.comments + totals.shares) / videoCount);
+              if (!(user.uniqueId || user.nickname)) {
+                rapidApiNonQuotaError = true;
+                markRapidApiFailure(apiKeys, rapidApiKey);
+                console.warn(
+                  `RapidAPI info returned empty user data for key ${maskApiKey(rapidApiKey)}.`,
+                );
+                continue;
               }
-            }
 
-            if (user && userStats) {
-              return res.json({
-                bio: user.signature || '',
-                channelId: user.uniqueId || '',
-                channelLink: `https://www.tiktok.com/@${user.uniqueId}`,
-                following: userStats.followingCount || 0,
-                followers: userStats.followerCount || 0,
-                likes: userStats.heartCount || 0,
+              markRapidApiSuccess(apiKeys, rapidApiKey);
+
+              const metrics = fastMode
+                ? emptyMetrics
+                : await fetchTikTokMetricsFromRapidApi(username, apiKeys, rapidApiKey);
+
+              const bio = user.signature || '';
+              const contact = normalizeContact({
+                phone: user.phone,
+                email: user.bioEmail || user.email,
+                bioLink: user.bioLink?.link,
+                text: bio,
+                source: 'api',
+              });
+              console.log(
+                `✓ RapidAPI success with key ${maskApiKey(rapidApiKey)} for @${username} (${fastMode ? 'fast' : 'full'} mode)`,
+              );
+
+              const payload = {
+                bio,
+                channelId: user.uniqueId || username,
+                channelLink: `https://www.tiktok.com/@${user.uniqueId || username}`,
+                following: stats.followingCount || stats.following_count || 0,
+                followers: stats.followerCount || stats.follower_count || 0,
+                likes: stats.heartCount || stats.heart_count || stats.heart || 0,
                 profilePic: user.avatarLarger || user.avatarMedium || user.avatarThumb || '',
                 nickname: user.nickname || '',
-                bioLink: user.bioLink?.link || '',
-                email: user.bioEmail || user.email || extractContact(user.signature || '').email,
-                phone: user.phone || extractContact(user.signature || '').phone,
-                averageView, averageEngagement, totalLikes, totalComments, totalShares, videoCount,
-              });
+                bioLink: contact.bioLink,
+                email: contact.email,
+                phone: contact.phone,
+                contactSource: contact.contactSource,
+                contactWarnings: contact.contactWarnings,
+                ...metrics,
+                rapidApiMode: fastMode ? 'fast' : 'full',
+                rapidApiKeyMask: maskApiKey(rapidApiKey),
+                cacheHit: false,
+                scrapedAt: new Date().toISOString(),
+              };
+              setCachedScrape(cacheKey, payload);
+              return res.json(payload);
+            } catch (rapidErr: any) {
+              rapidApiNonQuotaError = true;
+              markRapidApiFailure(apiKeys, rapidApiKey);
+              console.warn(`RapidAPI key ${maskApiKey(rapidApiKey)} crashed:`, rapidErr.message);
             }
           }
-        } catch (e) {
-          console.error("Error parsing SIGI_STATE", e);
         }
       }
 
-      // Meta tags fallback
-      const title = $('title').text();
-      const desc = $('meta[name="description"]').attr('content');
-      const image = $('meta[property="og:image"]').attr('content');
-      const urlCanonical = $('meta[property="og:url"]').attr('content');
+      if (rapidApiQuotaBlocked && !canUsePuppeteerFallback) {
+        const waitMs = getNextRapidApiReadyInMs(apiKeys);
+        const retryHint =
+          waitMs > 0
+            ? `Thử lại sau khoảng ${formatDurationMs(waitMs)} hoặc thêm key mới trong Cài đặt.`
+            : 'Hãy thêm key mới trong Cài đặt để hệ thống tiếp tục xoay vòng.';
 
-      if (title && desc) {
-        return res.json({
-          bio: desc,
-          channelId: title.split('|')[0].trim(),
-          channelLink: urlCanonical || url,
-          following: "N/A",
-          followers: "N/A",
-          likes: "N/A",
-          profilePic: image,
-          nickname: title.split('|')[0].trim()
+        return res.status(429).json({
+          code: 'RAPIDAPI_ALL_KEYS_EXHAUSTED',
+          error: `Tất cả RapidAPI key hiện đang hết quota hoặc trong thời gian cooldown. ${retryHint}`,
         });
       }
 
-      return res.status(404).json({ error: "Không thể trích xuất dữ liệu. TikTok có thể đang chặn (Captcha)." });
+      if (!apiKeys.length && !canUsePuppeteerFallback) {
+        return res.status(400).json({
+          code: 'RAPIDAPI_KEYS_MISSING',
+          error: 'Chưa cấu hình RapidAPI key cho môi trường serverless. Hãy thêm ít nhất 1 key trong Cài đặt.',
+        });
+      }
 
+      if (apiKeys.length > 0) {
+        console.warn('RapidAPI did not return usable data, falling back to Puppeteer Stealth');
+      } else {
+        console.warn('No RapidAPI key configured, trying Puppeteer Stealth fallback');
+      }
+
+      // ====== METHOD 2: Puppeteer Stealth Fallback ======
+      if (canUsePuppeteerFallback) {
+        try {
+          const browser = await getStealthBrowser();
+          const page = await browser.newPage();
+          await page.setViewport({ width: 1920, height: 1080 });
+          await page.goto(fetchUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+          await new Promise(r => setTimeout(r, 3000));
+
+          const html = await page.content();
+          await page.close();
+
+          const $ = cheerio.load(html);
+          const scriptContent = $('#__UNIVERSAL_DATA_FOR_REHYDRATION__').html();
+          if (scriptContent) {
+            try {
+              const data = JSON.parse(scriptContent);
+              const userInfo = data?.__DEFAULT_SCOPE__?.['webapp.user-detail']?.userInfo;
+              if (userInfo?.user && userInfo?.stats) {
+                const user = userInfo.user;
+                const stats = userInfo.stats;
+                const bio = user.signature || '';
+                const contact = normalizeContact({
+                  phone: user.phone,
+                  email: user.bioEmail,
+                  bioLink: user.bioLink?.link,
+                  text: bio,
+                  source: 'fallback',
+                });
+                const payload = {
+                  bio,
+                  channelId: user.uniqueId || '',
+                  channelLink: `https://www.tiktok.com/@${user.uniqueId}`,
+                  following: stats.followingCount || 0,
+                  followers: stats.followerCount || 0,
+                  likes: stats.heartCount || 0,
+                  profilePic: user.avatarLarger || user.avatarMedium || '',
+                  nickname: user.nickname || '',
+                  bioLink: contact.bioLink,
+                  email: contact.email,
+                  phone: contact.phone,
+                  contactSource: contact.contactSource,
+                  contactWarnings: contact.contactWarnings,
+                  ...emptyMetrics,
+                  rapidApiMode: 'fallback',
+                  partialWarnings: ['Dữ liệu lấy bằng fallback nên không có TikTok video metrics.'],
+                  cacheHit: false,
+                  scrapedAt: new Date().toISOString(),
+                };
+                setCachedScrape(cacheKey, payload);
+                return res.json(payload);
+              }
+            } catch (e) {
+              console.error("Puppeteer parse error:", e);
+            }
+          }
+        } catch (puppeteerErr: any) {
+          console.error("Puppeteer fallback error:", puppeteerErr.message);
+        }
+      }
+
+      if (rapidApiQuotaBlocked) {
+        const waitMs = getNextRapidApiReadyInMs(apiKeys);
+        return res.status(429).json({
+          code: 'RAPIDAPI_ALL_KEYS_EXHAUSTED',
+          error:
+            waitMs > 0
+              ? `Tất cả RapidAPI key đã hết quota hoặc đang cooldown. Thử lại sau khoảng ${formatDurationMs(waitMs)}.`
+              : 'Tất cả RapidAPI key đã hết quota hoặc không còn khả dụng.',
+        });
+      }
+
+      if (!apiKeys.length) {
+        return res.status(400).json({
+          code: 'RAPIDAPI_KEYS_MISSING',
+          error: "Chưa cấu hình RapidAPI key và fallback không lấy được dữ liệu TikTok.",
+        });
+      }
+
+      if (rapidApiNonQuotaError && !canUsePuppeteerFallback) {
+        return res.status(503).json({
+          code: 'TIKTOK_SCRAPE_UNAVAILABLE',
+          error: "RapidAPI không trả về dữ liệu hợp lệ và môi trường hiện tại không hỗ trợ Puppeteer fallback.",
+        });
+      }
+
+      return res.status(404).json({
+        code: 'TIKTOK_SCRAPE_FAILED',
+        error: "Không thể trích xuất dữ liệu. RapidAPI không trả về dữ liệu hợp lệ và TikTok chặn truy cập trực tiếp.",
+      });
     } catch (error: any) {
       console.error("Scrape error:", error.message);
       res.status(500).json({ error: "Lỗi khi lấy dữ liệu: " + error.message });
     }
   });
 
-  // ============ TikTok Video Engagement (RapidAPI) ============
-  app.post('/api/tiktok-videos', async (req, res) => {
-    try {
-      const { username } = req.body;
-      if (!username) {
-        return res.status(400).json({ error: 'Username is required' });
-      }
 
-      const RAPIDAPI_KEY = (req.headers['x-rapidapi-key'] as string) || process.env.RAPIDAPI_KEY;
-      if (!RAPIDAPI_KEY || RAPIDAPI_KEY === 'YOUR_RAPIDAPI_KEY') {
-        return res.status(400).json({ error: 'RapidAPI key chưa được cấu hình. Vui lòng thiết lập trong Cài đặt hoặc file .env' });
-      }
-
-      // Call RapidAPI TikTok Scraper - get user posts
-      const apiUrl = `https://tiktok-scraper7.p.rapidapi.com/user/posts?unique_id=${encodeURIComponent(username)}&count=15`;
-      
-      const response = await fetch(apiUrl, {
-        method: 'GET',
-        headers: {
-          'x-rapidapi-key': RAPIDAPI_KEY,
-          'x-rapidapi-host': 'tiktok-scraper7.p.rapidapi.com',
-        },
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        console.error('RapidAPI error:', response.status, errText);
-        throw new Error(`RapidAPI lỗi (${response.status})`);
-      }
-
-      const data = await response.json();
-      
-      // Extract video items from response
-      let videos: any[] = [];
-      if (data?.data?.videos) {
-        videos = data.data.videos;
-      } else if (Array.isArray(data?.data)) {
-        videos = data.data;
-      } else if (data?.videos) {
-        videos = data.videos;
-      }
-
-      if (videos.length === 0) {
-        return res.json({
-          averageView: 0,
-          averageEngagement: 0,
-          videos: [],
-          videoCount: 0,
-        });
-      }
-
-      // Take up to 15 recent videos, sort by views ascending, take the 3 lowest
-      const recentVideos = videos.slice(0, 15);
-      const sortedVideos = [...recentVideos].sort((a: any, b: any) => {
-        const statsA = a.stats || a;
-        const statsB = b.stats || b;
-        const viewsA = statsA.play_count || statsA.playCount || a.play_count || 0;
-        const viewsB = statsB.play_count || statsB.playCount || b.play_count || 0;
-        return viewsA - viewsB;
-      });
-      const targetVideos = sortedVideos.slice(0, 5);
-
-      const videoStats = targetVideos.map((v: any) => {
-        const stats = v.stats || v;
-        return {
-          views: stats.play_count || stats.playCount || v.play_count || 0,
-          likes: stats.digg_count || stats.diggCount || v.digg_count || 0,
-          comments: stats.comment_count || stats.commentCount || v.comment_count || 0,
-          shares: stats.share_count || stats.shareCount || v.share_count || 0,
-          saves: stats.collect_count || stats.collectCount || v.collect_count || 0,
-          description: v.title || v.desc || v.description || '',
-        };
-      });
-
-      const videoCount = videoStats.length;
-      const totals = videoStats.reduce((acc: any, v: any) => ({
-        views: acc.views + v.views,
-        likes: acc.likes + v.likes,
-        comments: acc.comments + v.comments,
-        shares: acc.shares + v.shares,
-        saves: acc.saves + v.saves,
-      }), { views: 0, likes: 0, comments: 0, shares: 0, saves: 0 });
-
-      const averageView = videoCount > 0 ? Math.round(totals.views / videoCount) : 0;
-      const totalEngagementPerVideo = videoCount > 0 
-        ? Math.round((totals.likes + totals.comments + totals.shares + totals.saves) / videoCount) 
-        : 0;
-
-      return res.json({
-        averageView,
-        averageEngagement: totalEngagementPerVideo,
-        videos: videoStats,
-        videoCount,
-        totals,
-      });
-
-    } catch (error: any) {
-      console.error('TikTok video fetch error:', error.message);
-      return res.status(500).json({ error: error.message || 'Lỗi khi lấy dữ liệu video' });
-    }
-  });
 
   // ============ Facebook Extract API ============
   app.post('/api/extract-facebook', async (req, res) => {
     try {
-      const { url } = req.body;
+      const { url, forceRefresh = false } = req.body;
       if (!url) return res.status(400).json({ error: 'URL is required' });
 
       let fetchUrl = url.trim();
@@ -426,6 +702,12 @@ app.use(express.json({ limit: '10mb' }));
         fetchUrl = new URL(fetchUrl).toString();
       } catch (e) {
         return res.status(400).json({ error: 'Invalid URL format' });
+      }
+
+      const cacheKey = createScrapeCacheKey('facebook', fetchUrl);
+      const cachedResult = !forceRefresh ? getCachedScrape(cacheKey) : null;
+      if (cachedResult) {
+        return res.json(cachedResult);
       }
 
       const userAgents = [
@@ -532,9 +814,31 @@ app.use(express.json({ limit: '10mb' }));
         throw new Error(`Facebook responded with status: ${response?.status}`);
       }
 
-      const fbContact = extractContact(description || html || '');
+      const visibleText = getVisiblePageText($);
+      const externalLinks = getFacebookExternalLinks($, fetchUrl);
+      const fbContact = normalizeContact({
+        bioLink: externalLinks[0] || '',
+        text: [nickname, title, description, visibleText].filter(Boolean).join(' '),
+        source: 'regex',
+      });
 
-      return res.json({ title, description, profilePic, nickname, followers, url: fetchUrl, phone: fbContact.phone, email: fbContact.email });
+      const payload = {
+        title,
+        description,
+        profilePic,
+        nickname,
+        followers,
+        url: fetchUrl,
+        phone: fbContact.phone,
+        email: fbContact.email,
+        bioLink: fbContact.bioLink,
+        contactSource: fbContact.contactSource,
+        contactWarnings: fbContact.contactWarnings,
+        cacheHit: false,
+        scrapedAt: new Date().toISOString(),
+      };
+      setCachedScrape(cacheKey, payload);
+      return res.json(payload);
     } catch (error: any) {
       console.error("Facebook extraction error:", error.message);
       return res.status(500).json({ error: error.message || 'Failed to extract Facebook data' });
@@ -608,7 +912,7 @@ app.use(express.json({ limit: '10mb' }));
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });
-  } else if (!process.env.VERCEL) {
+  } else if (!isServerlessRuntime) {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`Production server running on http://localhost:${PORT}`);
     });

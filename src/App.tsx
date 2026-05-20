@@ -4,10 +4,37 @@ import { ScoutCRM } from './components/ScoutCRM';
 import { RestoredData } from './types';
 import { Radar, Database, Menu, X, Sun, Moon, Settings } from 'lucide-react';
 import { fetchFromSheet } from './lib/api';
+import { hydrateRestoredProfile, mergeProfileBatch } from './lib/profileChangeDetection';
+
+type ExtractorPrefillRequest = {
+  id: string;
+  urls: string[];
+  forceRefresh: boolean;
+};
+
+function isSupportedIntakeUrl(url: string) {
+  return /^(https?:\/\/)?([^/]+\.)?(tiktok\.com|facebook\.com|fb\.com|fb\.watch)(\/|$)/i.test(url.trim());
+}
+
+function parseExtractorIntakeUrls(search: string) {
+  const params = new URLSearchParams(search);
+  const rawValues = [...params.getAll('addUrl'), ...params.getAll('addUrls')];
+
+  return [
+    ...new Set(
+      rawValues
+        .flatMap(value => value.split(/[\n\r]+/))
+        .map(url => url.trim())
+        .filter(url => url && isSupportedIntakeUrl(url)),
+    ),
+  ];
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'extractor' | 'crm' | 'settings'>('extractor');
   const [restoredData, setRestoredData] = useState<RestoredData[]>([]);
+  const [hasLoadedRestoredData, setHasLoadedRestoredData] = useState(false);
+  const [extractorPrefillRequest, setExtractorPrefillRequest] = useState<ExtractorPrefillRequest | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window !== 'undefined') {
@@ -32,18 +59,7 @@ export default function App() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        const migrated = parsed.map((r: any) => ({
-          ...r,
-          tier: r.tier || [],
-          location: r.location || [],
-          group: r.group || [],
-          campaign: r.campaign || [],
-          sow: r.sow || [],
-          notes: r.notes || [],
-          rating: r.rating || 0,
-          phone: r.phone || '',
-          email: r.email || '',
-        }));
+        const migrated = parsed.map((r: any) => hydrateRestoredProfile(r));
         setRestoredData(migrated);
       } catch (e) {
         console.error('Failed to parse saved data', e);
@@ -55,21 +71,51 @@ export default function App() {
     if (currentWebhook) {
       fetchFromSheet(currentWebhook).then(freshData => {
         if (freshData && freshData.length > 0) {
-          setRestoredData(freshData);
+          setRestoredData(current => mergeProfileBatch(current, freshData, 'sheet').data);
           console.log("Synced fresh data from Google Sheet:", freshData.length, "profiles");
         }
       });
     }
+    setHasLoadedRestoredData(true);
   }, []);
 
   // Save to localStorage when data changes
   useEffect(() => {
+    if (!hasLoadedRestoredData) return;
     localStorage.setItem('scout_hub_data', JSON.stringify(restoredData));
-  }, [restoredData]);
+  }, [hasLoadedRestoredData, restoredData]);
 
   const handleSaveToRestored = (newData: RestoredData[]) => {
-    setRestoredData(prev => [...prev, ...newData]);
+    setRestoredData(prev => mergeProfileBatch(prev, newData, 'extractor').data);
   };
+
+  const queueExtractorUrls = (urls: string[], forceRefresh = false) => {
+    const cleanUrls = [...new Set(urls.map(url => url.trim()).filter(Boolean))];
+    if (cleanUrls.length === 0) return;
+
+    setExtractorPrefillRequest({
+      id: `${Date.now()}`,
+      urls: cleanUrls,
+      forceRefresh,
+    });
+    setActiveTab('extractor');
+    setSidebarOpen(false);
+  };
+
+  const handleRefreshProfiles = (urls: string[]) => {
+    queueExtractorUrls(urls, true);
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const intakeUrls = parseExtractorIntakeUrls(window.location.search);
+    if (intakeUrls.length === 0) return;
+
+    queueExtractorUrls(intakeUrls, false);
+    const cleanUrl = `${window.location.pathname}${window.location.hash}`;
+    window.history.replaceState({}, document.title, cleanUrl);
+  }, []);
 
   const toggleTheme = () => {
     setTheme(prev => prev === 'dark' ? 'light' : 'dark');
@@ -209,6 +255,7 @@ export default function App() {
               onSaveToRestored={handleSaveToRestored} 
               webhookUrl={webhookUrl}
               theme={theme}
+              prefillRequest={extractorPrefillRequest}
             />
           )}
           {activeTab === 'crm' && (
@@ -217,6 +264,7 @@ export default function App() {
               onUpdateData={setRestoredData} 
               webhookUrl={webhookUrl}
               theme={theme}
+              onRefreshProfiles={handleRefreshProfiles}
             />
           )}
           {activeTab === 'settings' && (
@@ -233,6 +281,17 @@ export default function App() {
 }
 
 // ============ Settings Panel ============
+function parseRapidApiKeyPool(value: string) {
+  return [
+    ...new Set(
+      value
+        .split(/[\n,;]+/)
+        .map((key) => key.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
 function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: string; onSaveWebhookUrl: (url: string) => void; theme: string }) {
   const [url, setUrl] = useState(webhookUrl);
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
@@ -253,11 +312,15 @@ function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: st
   const textM = isDark ? 'text-slate-500' : 'text-slate-400';
   const codeBg = isDark ? 'bg-black/30 border-white/5' : 'bg-slate-50 border-slate-200';
   const codeText = isDark ? 'text-emerald-400' : 'text-emerald-700';
+  const parsedRapidApiKeys = parseRapidApiKeyPool(rapidApiKey);
+  const bookmarkletCode = `javascript:(function(){var currentUrl=window.location.href;var supported=/(^|\\.)(tiktok\\.com|facebook\\.com|fb\\.com|fb\\.watch)$/i.test(window.location.hostname);if(supported){var target='${hostOrigin}/?addUrl='+encodeURIComponent(currentUrl);var win=window.open(target,'_blank','noopener,noreferrer');if(win){win.focus();}else{window.location.href=target;}}else{alert('Scout Hub chỉ hỗ trợ TikTok/Facebook profile.');}})();`;
 
   const handleSave = () => {
+    const normalizedRapidApiKeys = parsedRapidApiKeys.join('\n');
     onSaveWebhookUrl(url.trim());
     localStorage.setItem('scout_hub_gemini_key', geminiKey.trim());
-    localStorage.setItem('scout_hub_rapidapi_key', rapidApiKey.trim());
+    localStorage.setItem('scout_hub_rapidapi_key', normalizedRapidApiKeys);
+    setRapidApiKey(normalizedRapidApiKeys);
     setTestStatus('idle');
     setKeysSaved(true);
     setTimeout(() => setKeysSaved(false), 3000);
@@ -290,7 +353,7 @@ function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: st
   const appsScriptCode = `const COLUMNS = [
   "Ngày lưu trữ", "Platform", "Tên", "ID", "Followers", "Avg View", "Avg Engagement",
   "SĐT", "Email", "Link Bio", "Link", "Bio", "Avatar", "Profile",
-  "Tier", "Vị trí", "Nhóm", "Campaign", "SOW", "Notes", "Rate History", "Rating"
+  "Tier", "Vị trí", "Nhóm", "Campaign", "SOW", "Notes", "Rate History", "Rating", "Workflow"
 ];
 
 function setupSheet() {
@@ -343,7 +406,8 @@ function doPost(e) {
       (p.sow || []).join(', '),
       JSON.stringify(p.notes || []),
       JSON.stringify(p.rateHistory || []),
-      p.rating || 0
+      p.rating || 0,
+      p.workflowStatus || 'New'
     ];
     
     var foundIdx = -1;
@@ -407,6 +471,7 @@ function doGet(e) {
       notes: parseJSON(row[19], []),
       rateHistory: parseJSON(row[20], []),
       rating: Number(row[21]) || 0,
+      workflowStatus: row[22] || 'New',
       status: 'success'
     });
   }
@@ -465,16 +530,23 @@ function doGet(e) {
                   placeholder="AIzaSy..."
                   className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${inputBg}`}
                 />
+                <p className={`text-[10px] ${textM} mt-1`}>Key này chỉ được lưu trong `localStorage` của trình duyệt hiện tại, không được inject vào frontend build.</p>
              </div>
              <div>
-                <label className={`text-xs font-medium ${textS} mb-1 block`}>RapidAPI Key (Tính TikTok Average Views / Engagement)</label>
-                <input
-                  type="password"
+                <label className={`text-xs font-medium ${textS} mb-1 block`}>RapidAPI Key Pool (Mỗi key 1 dòng, auto xoay vòng khi quota)</label>
+                <textarea
                   value={rapidApiKey}
                   onChange={(e) => setRapidApiKey(e.target.value)}
-                  placeholder="Để trống nếu đã cài đặt ở Server"
-                  className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${inputBg}`}
+                  rows={Math.max(3, Math.min(6, parsedRapidApiKeys.length || 3))}
+                  spellCheck={false}
+                  placeholder={'key_1\nkey_2\nkey_3'}
+                  className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 font-mono resize-y ${inputBg}`}
                 />
+                <p className={`text-[10px] ${textM} mt-1`}>
+                  {parsedRapidApiKeys.length > 0
+                    ? `Đã nhận diện ${parsedRapidApiKeys.length} key. Server sẽ round-robin, tự cooldown key bị 429, và tự chuyển key khác khi quota cạn.`
+                    : 'Bạn có thể paste nhiều key, mỗi key một dòng hoặc ngăn cách bằng dấu phẩy. Server sẽ tự xoay vòng khi một key hết quota.'}
+                </p>
              </div>
           </div>
         </div>
@@ -497,7 +569,7 @@ function doGet(e) {
               <ol className="list-decimal pl-5 space-y-1">
                 <li>Mở <a href="https://sheets.google.com" target="_blank" rel="noreferrer" className="text-violet-400 hover:text-violet-300">Google Sheets</a> và tạo 1 sheet mới</li>
                 <li>Đặt tên cho sheet và thêm header ở dòng đầu tiên (nếu để trống code sẽ tự động tạo Header):
-                  <code className={`text-xs ${codeText} block mt-1`}>Ngày lưu trữ | Platform | Tên | ID | Followers | SĐT | Email | Link Bio | Link | Bio | Avatar | Profile | Tier | Vị trí | Nhóm | Campaign | Notes | Rate History | Rating</code>
+                  <code className={`text-xs ${codeText} block mt-1`}>Ngày lưu trữ | Platform | Tên | ID | Followers | Avg View | Avg Engagement | SĐT | Email | Link Bio | Link | Bio | Avatar | Profile | Tier | Vị trí | Nhóm | Campaign | SOW | Notes | Rate History | Rating | Workflow</code>
                 </li>
               </ol>
             </div>
@@ -554,27 +626,37 @@ function doGet(e) {
         {showBookmarkletGuide && (
           <div className={`mt-4 space-y-4 text-sm ${textS}`}>
             <p className={`text-[13px] ${textM}`}>
-              Sử dụng Bookmarklet (Dấu trang) để quét nhanh profile khi đang lướt TikTok hoặc Facebook chỉ với 1 click.
+              Sử dụng Bookmarklet để đưa profile TikTok/Facebook đang xem vào Extractor queue chỉ với 1 click.
             </p>
+            <a
+              href={bookmarkletCode}
+              onClick={(event) => event.preventDefault()}
+              className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-semibold ${isDark ? 'bg-violet-500/10 border-violet-500/20 text-violet-200' : 'bg-violet-50 border-violet-200 text-violet-700'}`}
+              title="Kéo nút này lên thanh bookmark để tạo bookmarklet nhanh"
+            >
+              Scout Hub Extract
+              <span className={`${textM} font-normal`}>kéo lên bookmark bar</span>
+            </a>
             <div>
               <h4 className={`font-semibold ${textP} mb-2`}>Bước 1: Tạo Bookmarklet</h4>
               <ol className="list-decimal pl-5 space-y-1">
                 <li>Hiển thị thanh dấu trang trên trình duyệt (Ctrl/Cmd + Shift + B).</li>
-                <li>Chuột phải vào thanh dấu trang, chọn <strong>Thêm trang... (Add page...)</strong></li>
-                <li>Phần Tên (Name): Nhập <strong>"Scout Hub Extract"</strong> (hoặc tên tùy ý).</li>
-                <li>Phần URL, paste đoạn code Javascript dưới đây vào và lưu lại:</li>
+                <li>Cách nhanh: kéo nút <strong>Scout Hub Extract</strong> ở trên lên thanh dấu trang.</li>
+                <li>Cách thủ công: chuột phải vào thanh dấu trang, chọn <strong>Thêm trang... (Add page...)</strong>.</li>
+                <li>Phần Tên (Name): nhập <strong>Scout Hub Extract</strong>.</li>
+                <li>Phần URL: paste đoạn JavaScript dưới đây vào và lưu lại.</li>
               </ol>
             </div>
             
             <div className={`relative rounded-lg border p-4 overflow-x-auto ${codeBg}`}>
               <button
-                onClick={() => navigator.clipboard.writeText(`javascript:(function(){var currentUrl=window.location.href;if(currentUrl.includes('tiktok.com')||currentUrl.includes('facebook.com')||currentUrl.includes('fb.com')){var newWindow=window.open('${hostOrigin}/?addUrl='+encodeURIComponent(currentUrl),'_blank');newWindow.focus();}else{alert('Scout Hub chỉ hỗ trợ nền tảng TikTok và Facebook!');}})();`)}
+                onClick={() => navigator.clipboard.writeText(bookmarkletCode)}
                 className="absolute top-2 right-2 px-2 py-1 text-[10px] font-medium bg-violet-600 text-white rounded hover:bg-violet-700 transition-colors"
               >
                 Copy
               </button>
               <pre className={`text-[11px] ${codeText} whitespace-pre-wrap`}>
-                javascript:(function()&#123;var currentUrl=window.location.href;if(currentUrl.includes('tiktok.com')||currentUrl.includes('facebook.com')||currentUrl.includes('fb.com'))&#123;var newWindow=window.open('{hostOrigin}/?addUrl='+encodeURIComponent(currentUrl),'_blank');newWindow.focus();&#125;else&#123;alert('Scout Hub chỉ hỗ trợ nền tảng TikTok và Facebook!');&#125;&#125;)();
+                {bookmarkletCode}
               </pre>
             </div>
 
@@ -583,13 +665,13 @@ function doGet(e) {
               <ul className="list-disc pl-5 space-y-1">
                 <li>Vào bằng trình duyệt đến 1 trang profile TikTok hoặc Facebook bất kỳ.</li>
                 <li>Click vào dấu trang <strong>"Scout Hub Extract"</strong> vừa tạo trên thanh dấu trang.</li>
-                <li>Scout Hub sẽ mở ra trong tab mới, tự động lấy link cấu hình sẵn và bạn chỉ việc ấn thêm vào CRM.</li>
+                <li>Scout Hub sẽ mở tab Extractor mới, tự add link vào queue; bạn chỉ cần bấm chạy extract rồi lưu vào CRM.</li>
               </ul>
             </div>
             <div className={`p-3 rounded-lg ${isDark ? 'bg-blue-500/10 border border-blue-500/20' : 'bg-blue-50 border border-blue-200'}`}>
               <p className={`text-xs ${isDark ? 'text-blue-300' : 'text-blue-700'}`}>
                 📌 <strong>Ghi chú:</strong> Mã Bookmarklet ở trên đã tự động lấy đường dẫn hệ thống hiện tại của bạn ({hostOrigin}). 
-                Chỉ cần kéo thả lưu lại là có thể kéo mở Hub từ bất kỳ tab TikTok/Facebook nào.
+                Nếu popup bị chặn, bookmarklet sẽ chuyển tab hiện tại sang Scout Hub để không làm mất intake.
               </p>
             </div>
           </div>

@@ -3,6 +3,10 @@ export interface ProfileData {
   url: string;
   status: 'pending' | 'processing' | 'success' | 'error';
   errorMsg?: string;
+  errorCode?: string;
+  errorCategory?: 'quota' | 'network' | 'blocked' | 'invalid' | 'unknown';
+  retryCount?: number;
+  lastAttemptAt?: string;
   nickname?: string;
   channelId?: string;
   followers?: string | number;
@@ -13,6 +17,11 @@ export interface ProfileData {
   phone?: string;
   email?: string;
   bioLink?: string;
+  profileNiche?: string;
+  audienceHint?: string;
+  classificationConfidence?: number;
+  contactSource?: 'regex' | 'ai' | 'api' | 'fallback';
+  contactWarnings?: string[];
   platform?: Platform;
   profileType?: 'Individual' | 'Community' | 'N/A';
   // TikTok engagement metrics
@@ -24,6 +33,11 @@ export interface ProfileData {
   totalSaves?: number;
   videoCount?: number;
   aiAnalysis?: string;
+  cacheHit?: boolean;
+  cacheSource?: 'client' | 'server';
+  cachedAt?: string;
+  scrapedAt?: string;
+  partialWarnings?: string[];
 }
 
 export interface ProfileNote {
@@ -32,8 +46,23 @@ export interface ProfileNote {
   createdAt: string;
 }
 
+export interface ProfileFieldChange {
+  field: string;
+  label: string;
+  oldValue: string | number | null;
+  newValue: string | number | null;
+}
+
+export interface ProfileChangeRecord {
+  id: string;
+  detectedAt: string;
+  source: 'extractor' | 'sheet' | 'import' | 'manual';
+  changes: ProfileFieldChange[];
+}
+
 export type Tier = 'Macro' | 'Micro' | 'Nano' | 'UGC';
 export type Platform = 'TikTok' | 'Facebook';
+export type WorkflowStatus = 'New' | 'Reviewed' | 'Shortlisted' | 'Contacted' | 'Negotiating' | 'Closed';
 
 export interface RestoredData extends ProfileData {
   id: string;
@@ -46,5 +75,11 @@ export interface RestoredData extends ProfileData {
   rateHistory?: { id: string, date: string, price: number, note?: string, sow?: string[] }[];
   rating: number;
   saveDate: string;
+  workflowStatus?: WorkflowStatus;
   lastUpdated?: string;
+  isWatchlisted?: boolean;
+  watchlistedAt?: string;
+  lastReviewedAt?: string;
+  lastChangedAt?: string;
+  changeHistory?: ProfileChangeRecord[];
 }

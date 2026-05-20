@@ -15,6 +15,8 @@ View your app in AI Studio: https://ai.studio/apps/c182f757-618a-4f68-89fd-0458e
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Start the app, then add your Gemini API key in `Cài đặt`. The key is stored in browser `localStorage`, not bundled into the frontend build.
+3. If you use TikTok metrics, add one or many RapidAPI keys in `Cài đặt` (one key per line). The app will rotate keys automatically when one key hits quota.
+4. Use cached scraping for repeated checks, or enable `Làm mới dữ liệu` in the extractor when you need fresh profile data.
+5. Run the app:
    `npm run dev`

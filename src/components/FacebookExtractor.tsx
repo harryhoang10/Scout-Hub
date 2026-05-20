@@ -5,6 +5,7 @@ import { Button } from './ui/button';
 import * as XLSX from 'xlsx';
 import { ProfileData, RestoredData } from '../types';
 import { GoogleGenAI, Type } from "@google/genai";
+import { normalizeContact } from '../lib/contactParser';
 
 interface FacebookExtractorProps {
   onSaveToRestored: (data: RestoredData[]) => void;
@@ -97,40 +98,27 @@ export function FacebookExtractor({ onSaveToRestored }: FacebookExtractorProps) 
           throw new Error(result.error || 'Lỗi không xác định');
         }
 
-        let phone = "N/A";
-        let email = "N/A";
-        let bioLink = "N/A";
         let followers = result.followers || "N/A";
-        let bio = result.description || "N/A";
+        const bio = result.description || '';
         let profileType: 'Individual' | 'Community' | 'N/A' = 'N/A';
         let aiAnalysis = "N/A";
-
-        // Regex fallback for email
-        const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
-        if (bio && (!email || email === "N/A")) {
-          const emailMatch = bio.match(emailRegex);
-          if (emailMatch && emailMatch.length > 0) {
-            email = emailMatch[0];
-          }
-        }
-
-        // Regex fallback for phone
-        const phoneRegex = /(?:zalo|sđt|phone|call|lh|liên hệ|hotline)?\s*[:\-.]?\s*((?:0|\+84)[0-9\.\-\s]{8,13})/i;
-        if (bio && (!phone || phone === "N/A")) {
-          const phoneMatch = bio.match(phoneRegex);
-          if (phoneMatch && phoneMatch.length > 1) {
-            phone = phoneMatch[1].replace(/[\.\-\s]/g, '');
-          }
-        }
+        const contact = normalizeContact({
+          phone: result.phone,
+          email: result.email,
+          bioLink: result.bioLink,
+          text: `${result.nickname || result.title || ''} ${result.description || ''}`,
+          source: result.contactSource || 'regex',
+        });
+        const contactWarnings = [...new Set([...(result.contactWarnings || []), ...contact.contactWarnings])];
 
         try {
-          const apiKey = localStorage.getItem('scout_hub_gemini_key') || process.env.GEMINI_API_KEY;
+          const apiKey = localStorage.getItem('scout_hub_gemini_key') || '';
           if (apiKey && (result.description || result.title)) {
             const ai = new GoogleGenAI({ apiKey });
             const prompt = `
-Bạn là một chuyên gia trích xuất dữ liệu. Phân tích các thông tin từ link Facebook sau đây.
-Xin hãy nhận diện và chuyển đổi chiêu trò che dấu số điện thoại thành số điện thoại hợp lệ.
-Mục aiAnalysis: Dự đoán 1-2 câu ngắn gọn về tệp khán giả (Độ tuổi, giới tính) và phong cách nội dung từ title và description. Nếu không rõ ghi N/A.
+Bạn là một chuyên gia phân tích profile Facebook.
+Không trích xuất hoặc suy đoán SĐT, email, link bio trong bước này.
+Chỉ chuẩn hóa followers nếu đã có bằng chứng trong dữ liệu và viết aiAnalysis 1-2 câu ngắn gọn về tệp khán giả/phong cách nội dung. Nếu không rõ ghi N/A.
 
 Title: """${result.title}"""
 Description: """${result.description}"""
@@ -146,15 +134,11 @@ Followers (đã trích xuất sơ bộ): """${result.followers || ''}"""
                 responseSchema: {
                   type: Type.OBJECT,
                   properties: {
-                    phone: { type: Type.STRING },
-                    email: { type: Type.STRING },
-                    link: { type: Type.STRING },
                     followers: { type: Type.STRING },
-                    bio: { type: Type.STRING },
                     profileType: { type: Type.STRING },
                     aiAnalysis: { type: Type.STRING }
                   },
-                  required: ["phone", "email", "link", "followers", "bio", "profileType", "aiAnalysis"]
+                  required: ["followers", "profileType", "aiAnalysis"]
                 }
               }
             });
@@ -168,11 +152,7 @@ Followers (đã trích xuất sơ bộ): """${result.followers || ''}"""
               }
               const aiData = JSON.parse(text);
               
-              if (aiData.phone && aiData.phone.trim() !== "") phone = aiData.phone;
-              if (aiData.email && aiData.email.trim() !== "") email = aiData.email;
-              if (aiData.link && aiData.link.trim() !== "") bioLink = aiData.link;
               if (aiData.followers && aiData.followers.trim() !== "") followers = aiData.followers;
-              if (aiData.bio && aiData.bio.trim() !== "") bio = aiData.bio;
               if (aiData.profileType === 'Community' || aiData.profileType === 'Individual') {
                 profileType = aiData.profileType;
               }
@@ -202,9 +182,11 @@ Followers (đã trích xuất sơ bộ): """${result.followers || ''}"""
           followers,
           bio,
           profilePic: result.profilePic,
-          phone,
-          email,
-          bioLink,
+          phone: contact.phone,
+          email: contact.email,
+          bioLink: contact.bioLink,
+          contactSource: contact.contactSource,
+          contactWarnings,
           profileType,
           aiAnalysis
         } : r));

@@ -6,3 +6,18 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Debug and temporary files
+debug.html
+debug_dom.js
+debug_html.js
+debug_server.html
+debug_shot.png
+debug_universal.json
+log.txt
+read_excel.js
+test_html.txt
+test_puppeteer.js
+tiktok_profile.png
+*.skill
+outputs/
