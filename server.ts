@@ -891,12 +891,14 @@ app.use(express.json({ limit: '10mb' }));
   });
 
   if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
+    import("vite").then(({ createServer: createViteServer }) => {
+      createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      }).then(vite => {
+        app.use(vite.middlewares);
+      });
     });
-    app.use(vite.middlewares);
   } else {
     // Serve static files from the React app
     app.use(express.static(path.join(__dirname, "dist")));
