@@ -1,9 +1,10 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Upload, FileDown, Trash2, Link as LinkIcon, Globe, Play, Save, CheckCircle, AlertCircle, Loader2, Send, RotateCcw, RefreshCw, Filter, Bookmark, X, Star } from 'lucide-react';
+import { Upload, FileDown, Trash2, Link as LinkIcon, Globe, Play, Save, CheckCircle, AlertCircle, Loader2, Send, RotateCcw, RefreshCw, Filter, Bookmark, X, Star, Briefcase } from 'lucide-react';
 import { ProfileData, RestoredData, Tier } from '../types';
 import * as XLSX from 'xlsx';
 import { upsertToSheet } from '../lib/api';
 import { normalizeContact } from '../lib/contactParser';
+import { GoogleGenAI } from "@google/genai";
 
 
 interface UniversalExtractorProps {
@@ -15,6 +16,8 @@ interface UniversalExtractorProps {
     urls: string[];
     forceRefresh?: boolean;
   } | null;
+  projectName?: string;
+  onProjectNameChange?: (name: string) => void;
 }
 
 const PROFILE_CACHE_VERSION = 'v3-contact-evidence';
@@ -372,7 +375,7 @@ function formatEngagement(val: number | undefined): string {
   return roundEngagement(val).toString();
 }
 
-export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefillRequest }: UniversalExtractorProps) {
+export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefillRequest, projectName = '', onProjectNameChange }: UniversalExtractorProps) {
   const [links, setLinks] = useState<ProfileData[]>(() => restoreExtractorQueue());
   const [manualInput, setManualInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -392,6 +395,87 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefil
   const RAPIDAPI_KEY = localStorage.getItem('scout_hub_rapidapi_key') || '';
   const rapidApiKeyPool = parseRapidApiKeyPool(RAPIDAPI_KEY);
   const rapidApiKeyHeader = rapidApiKeyPool.join(',');
+  const runAIAnalysis = async (bio: string): Promise<any> => {
+    const aiApiKey = localStorage.getItem('scout_hub_gemini_key') || '';
+    const defaultResult = { phone: '', email: '', bioLink: '', aiAnalysis: '' };
+    if (!aiApiKey || !bio || !bio.trim()) return defaultResult;
+
+    let aiBaseUrl = localStorage.getItem('scout_hub_ai_base_url') || 'https://generativelanguage.googleapis.com/v1beta/openai/';
+    if (!aiBaseUrl.endsWith('/')) aiBaseUrl += '/';
+
+    const aiModel = localStorage.getItem('scout_hub_ai_model') || 'gemini-2.5-flash';
+
+    try {
+      const prompt = `Bạn là chuyên gia phân tích dữ liệu profile mạng xã hội.
+Hãy đọc kỹ phần Tiểu sử (Bio) sau đây và trích xuất thông tin liên hệ một cách chính xác nhất.
+
+Nhiệm vụ:
+1. Trích xuất Số điện thoại (Phone): Tìm số điện thoại (đặc biệt là Việt Nam, ví dụ bắt đầu bằng +84 hoặc 0). Giải mã các dạng viết ẩn ý như chữ thành số (không chín ba...), viết cách quãng (0 9 8...), hoặc ký tự đặc biệt. Định dạng kết quả về dạng chuỗi số liên tục (ví dụ: 0987654321). Nếu không có, điền "N/A".
+2. Trích xuất Email: Tìm địa chỉ email. Giải mã các dạng chống bot như "name(at)gmail.com", "name[at]gmail.com", "name dot com". Định dạng về dạng email tiêu chuẩn (ví dụ: name@gmail.com). Nếu không có, điền "N/A".
+3. Trích xuất Link Bio: Tìm các liên kết ngoài (website, linktree, locket, shoppe...). Nếu không có, điền "N/A".
+4. Tóm tắt AI Analysis: Tóm tắt 1 câu cực kỳ ngắn gọn (tối đa 15 từ) về lĩnh vực chính (Niche) và tệp khán giả mục tiêu của kênh này.
+
+Bạn BẮT BUỘC phải trả về kết quả dưới dạng một đối tượng JSON duy nhất có định dạng chính xác sau đây, không thêm bất kỳ chữ nào khác ngoài JSON:
+{
+  "phone": "Số điện thoại hoặc N/A",
+  "email": "Email hoặc N/A",
+  "bioLink": "Link hoặc N/A",
+  "aiAnalysis": "Câu tóm tắt lĩnh vực & khán giả mục tiêu"
+}
+
+Bio để phân tích:
+"""${bio}"""`;
+      
+      const response = await fetch(`${aiBaseUrl}chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${aiApiKey}`,
+        },
+        body: JSON.stringify({
+          model: aiModel,
+          messages: [
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.2,
+          max_tokens: 250,
+        }),
+      });
+
+      if (!response.ok) return defaultResult;
+
+      const resData = await response.json();
+      const textResponse = resData?.choices?.[0]?.message?.content?.trim() || '';
+      
+      let cleaned = textResponse.trim();
+      if (cleaned.startsWith('```json')) {
+        cleaned = cleaned.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+      } else if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replace(/^```\s*/, '').replace(/\s*```$/, '');
+      }
+      
+      try {
+        const data = JSON.parse(cleaned);
+        return {
+          phone: data.phone && data.phone !== 'N/A' ? String(data.phone).trim() : '',
+          email: data.email && data.email !== 'N/A' ? String(data.email).trim() : '',
+          bioLink: data.bioLink && data.bioLink !== 'N/A' ? String(data.bioLink).trim() : '',
+          aiAnalysis: data.aiAnalysis && data.aiAnalysis !== 'N/A' ? String(data.aiAnalysis).trim() : '',
+        };
+      } catch (e) {
+        console.error("Failed to parse AI JSON response, falling back to raw text:", textResponse);
+        return {
+          phone: '',
+          email: '',
+          bioLink: '',
+          aiAnalysis: textResponse.length < 100 ? textResponse : '',
+        };
+      }
+    } catch (e) {
+      console.error("AI analysis error:", e);
+      return defaultResult;
+    }
+  };
 
   const isDark = theme === 'dark';
   const cardBg = isDark ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-white border-slate-200';
@@ -732,12 +816,15 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefil
     let videoTotalShares = data.totalShares || 0;
     let totalSaves = data.totalSaves || 0;
     let videoCount = data.videoCount || 0;
+
+    const aiResult = await runAIAnalysis(data.bio || '');
+
     const normalizedContact = normalizeContact({
-      phone: data.phone,
-      email: data.email,
-      bioLink: data.bioLink,
+      phone: data.phone || aiResult.phone,
+      email: data.email || aiResult.email,
+      bioLink: data.bioLink || aiResult.bioLink,
       text: `${data.nickname || ''} ${data.bio || ''}`,
-      source: data.contactSource || 'api',
+      source: data.phone || data.email || data.bioLink ? (data.contactSource || 'api') : (aiResult.phone || aiResult.email || aiResult.bioLink ? 'ai' : 'api'),
     });
 
     const result: Partial<ProfileData> = {
@@ -761,6 +848,7 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefil
       totalShares: videoTotalShares,
       totalSaves,
       videoCount,
+      aiAnalysis: data.aiAnalysis || aiResult.aiAnalysis,
       cacheHit: data.cacheHit || false,
       cacheSource: data.cacheSource,
       cachedAt: data.cachedAt,
@@ -800,12 +888,15 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefil
 
     const partialWarnings = [...(data.partialWarnings || [])];
     const contactWarnings = [...(data.contactWarnings || [])];
+
+    const aiResult = await runAIAnalysis(data.description || '');
+
     const normalizedContact = normalizeContact({
-      phone: data.phone,
-      email: data.email,
-      bioLink: data.bioLink,
+      phone: data.phone || aiResult.phone,
+      email: data.email || aiResult.email,
+      bioLink: data.bioLink || aiResult.bioLink,
       text: `${data.nickname || data.title || ''} ${data.description || ''}`,
-      source: data.contactSource || 'regex',
+      source: data.phone || data.email || data.bioLink ? (data.contactSource || 'regex') : (aiResult.phone || aiResult.email || aiResult.bioLink ? 'ai' : 'regex'),
     });
 
     const result: Partial<ProfileData> = {
@@ -821,6 +912,7 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefil
       contactWarnings: [...new Set([...contactWarnings, ...normalizedContact.contactWarnings])],
       platform: 'Facebook',
       profileType: url.toLowerCase().includes('/groups/') ? 'Community' : 'Individual',
+      aiAnalysis: data.aiAnalysis || aiResult.aiAnalysis,
       cacheHit: data.cacheHit || false,
       cacheSource: data.cacheSource,
       cachedAt: data.cachedAt,
@@ -852,12 +944,14 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefil
       tier: [determineTier(l.followers)],
       location: [],
       group: [],
-      campaign: [],
+      campaign: projectName ? [projectName] : [],
       sow: [],
       notes: [],
       rateHistory: [],
       rating: 0,
       saveDate,
+      projectName: projectName || undefined,
+      outreachStatus: 'Not Started' as const,
     }));
 
     if (webhookUrl) {
@@ -899,12 +993,14 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefil
       tier: [determineTier(l.followers)],
       location: [],
       group: [],
-      campaign: [],
+      campaign: projectName ? [projectName] : [],
       sow: [],
       notes: [],
       rateHistory: [],
       rating: 0,
       saveDate,
+      projectName: projectName || undefined,
+      outreachStatus: 'Not Started' as const,
     }));
 
     setWebhookStatus('sending');
@@ -1022,6 +1118,30 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefil
             🔖 Kéo tôi lên Bookmark bar
           </a>
         </div>
+      </div>
+
+      {/* Project Name Input */}
+      <div className={`rounded-xl border p-4 ${cardBg} flex items-center gap-3`}>
+        <Briefcase className={`h-4 w-4 shrink-0 ${isDark ? 'text-violet-400' : 'text-violet-600'}`} />
+        <div className="flex-1">
+          <input
+            type="text"
+            value={projectName}
+            onChange={(e) => onProjectNameChange?.(e.target.value)}
+            placeholder="Tên dự án (optional) — VD: Campaign Son Kem ABC Q3"
+            className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${inputBg}`}
+          />
+        </div>
+        {projectName && (
+          <button
+            onClick={() => onProjectNameChange?.('')}
+            className={`p-1.5 rounded-lg transition-colors ${isDark ? 'text-slate-500 hover:text-slate-300 hover:bg-white/5' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'}`}
+            title="Xoá tên dự án"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+        <p className={`text-[10px] ${textM} hidden sm:block shrink-0`}>Khi save CRM, tự gắn project name cho mỗi profile</p>
       </div>
 
       {/* Input Section */}
@@ -1350,6 +1470,7 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefil
                 <th className="px-3 py-3 font-medium w-24">Link Bio</th>
                 <th className="px-3 py-3 font-medium w-44">Link</th>
                 <th className="px-3 py-3 font-medium w-40">Bio</th>
+                <th className="px-3 py-3 font-medium w-48">AI Phân tích</th>
                 <th className="px-3 py-3 font-medium w-12 text-center">Ảnh</th>
                 <th className="px-3 py-3 font-medium w-24 text-center">Trạng thái</th>
               </tr>
@@ -1357,14 +1478,14 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefil
             <tbody className={`divide-y ${isDark ? 'divide-white/[0.03]' : 'divide-slate-100'}`}>
               {links.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className={`px-4 py-12 text-center ${textM}`}>
+                  <td colSpan={15} className={`px-4 py-12 text-center ${textM}`}>
                     <Globe className={`h-8 w-8 mx-auto mb-2 ${isDark ? 'opacity-20' : 'opacity-30'}`} />
                     <p>Chưa có dữ liệu. Thêm link TikTok hoặc Facebook để bắt đầu.</p>
                   </td>
                 </tr>
               ) : filteredLinks.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className={`px-4 py-12 text-center ${textM}`}>
+                  <td colSpan={15} className={`px-4 py-12 text-center ${textM}`}>
                     <Filter className={`h-8 w-8 mx-auto mb-2 ${isDark ? 'opacity-20' : 'opacity-30'}`} />
                     <p>Không có dòng nào khớp bộ lọc hiện tại.</p>
                     <button
@@ -1412,6 +1533,7 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefil
                     </a>
                   </td>
                   <td className={`px-3 py-2.5 text-xs ${textS} truncate max-w-[10rem]`} title={link.bio}>{link.bio || '-'}</td>
+                  <td className={`px-3 py-2.5 text-xs font-medium ${isDark ? 'text-violet-300' : 'text-violet-700'} truncate max-w-[12rem]`} title={link.aiAnalysis}>{link.aiAnalysis || '-'}</td>
                   <td className="px-3 py-2.5 text-center">
                     {link.profilePic ? (
                       <img src={link.profilePic} alt="" className="w-7 h-7 rounded-full object-cover mx-auto border border-white/10" referrerPolicy="no-referrer" />

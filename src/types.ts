@@ -63,6 +63,34 @@ export interface ProfileChangeRecord {
 export type Tier = 'Macro' | 'Micro' | 'Nano' | 'UGC';
 export type Platform = 'TikTok' | 'Facebook';
 export type WorkflowStatus = 'New' | 'Reviewed' | 'Shortlisted' | 'Contacted' | 'Negotiating' | 'Closed';
+export type OutreachStatus = 'Not Started' | 'Drafted' | 'Sent' | 'Replied' | 'Negotiating' | 'Confirmed' | 'Declined';
+
+export interface OutreachTemplate {
+  id: string;
+  name: string;
+  section: 'email' | 'dm_tiktok' | 'dm_facebook' | 'dm_instagram' | 'other';
+  subject?: string;
+  body: string;
+  variables: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ParsedQuotationItem {
+  name: string;
+  price: number;
+  currency?: string;
+}
+
+export interface ParsedQuotation {
+  profileDetected: { name: string | null; handle: string | null };
+  sowItems: ParsedQuotationItem[];
+  timeline: string | null;
+  usageRights: string | null;
+  notes: string | null;
+  contact: { phone: string | null; email: string | null };
+  confidence: number;
+}
 
 export interface RestoredData extends ProfileData {
   id: string;
@@ -76,6 +104,9 @@ export interface RestoredData extends ProfileData {
   rating: number;
   saveDate: string;
   workflowStatus?: WorkflowStatus;
+  outreachStatus?: OutreachStatus;
+  projectName?: string;
+  lastQuotedAt?: string;
   lastUpdated?: string;
   isWatchlisted?: boolean;
   watchlistedAt?: string;

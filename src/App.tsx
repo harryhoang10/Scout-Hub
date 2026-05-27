@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { UniversalExtractor } from './components/UniversalExtractor';
 import { ScoutCRM } from './components/ScoutCRM';
 import { RestoredData } from './types';
-import { Radar, Database, Menu, X, Sun, Moon, Settings } from 'lucide-react';
+import { Radar, Database, Menu, X, Sun, Moon, Settings, Briefcase } from 'lucide-react';
 import { fetchFromSheet } from './lib/api';
 import { hydrateRestoredProfile, mergeProfileBatch } from './lib/profileChangeDetection';
 
@@ -45,6 +45,14 @@ export default function App() {
   const [webhookUrl, setWebhookUrl] = useState(() => {
     return localStorage.getItem('scout_hub_webhook_url') || '';
   });
+  const [projectName, setProjectName] = useState(() => {
+    return localStorage.getItem('scout_hub_active_project') || '';
+  });
+
+  // Persist project name
+  useEffect(() => {
+    localStorage.setItem('scout_hub_active_project', projectName);
+  }, [projectName]);
 
   // Apply theme class
   useEffect(() => {
@@ -292,9 +300,19 @@ export default function App() {
         <div className={`topbar sticky top-0 z-20 ${topBarBg} backdrop-blur-xl border-b ${borderColor} px-6 lg:px-8 py-4`}>
           <div className="flex items-center justify-between max-w-[1600px] mx-auto">
             <div className="pl-10 lg:pl-0">
-              <h2 className={`text-lg font-semibold ${textPrimary}`}>
-                {activeTab === 'extractor' ? 'Universal Extractor' : activeTab === 'crm' ? 'Scout CRM' : 'Cài đặt'}
-              </h2>
+              <div className="flex items-center gap-3">
+                <h2 className={`text-lg font-semibold ${textPrimary}`}>
+                  {activeTab === 'extractor' ? 'Universal Extractor' : activeTab === 'crm' ? 'Scout CRM' : 'Cài đặt'}
+                </h2>
+                {projectName && (
+                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium ${
+                    isDark ? 'bg-violet-500/15 text-violet-300 border border-violet-500/20' : 'bg-violet-50 text-violet-700 border border-violet-200'
+                  }`}>
+                    <Briefcase className="h-3 w-3" />
+                    {projectName}
+                  </span>
+                )}
+              </div>
               <p className={`text-xs ${textMuted} mt-0.5`}>
                 {activeTab === 'extractor' 
                   ? 'Paste link TikTok / Facebook → Auto-extract profile data' 
@@ -315,6 +333,8 @@ export default function App() {
               webhookUrl={webhookUrl}
               theme={theme}
               prefillRequest={extractorPrefillRequest}
+              projectName={projectName}
+              onProjectNameChange={setProjectName}
             />
           )}
           {activeTab === 'crm' && (
@@ -324,6 +344,7 @@ export default function App() {
               webhookUrl={webhookUrl}
               theme={theme}
               onRefreshProfiles={handleRefreshProfiles}
+              projectName={projectName}
             />
           )}
           {activeTab === 'settings' && (
@@ -358,6 +379,8 @@ function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: st
   const [showGuide, setShowGuide] = useState(false);
   const [showBookmarkletGuide, setShowBookmarkletGuide] = useState(false);
   const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('scout_hub_gemini_key') || '');
+  const [aiBaseUrl, setAiBaseUrl] = useState(() => localStorage.getItem('scout_hub_ai_base_url') || 'https://generativelanguage.googleapis.com/v1beta/openai/');
+  const [aiModel, setAiModel] = useState(() => localStorage.getItem('scout_hub_ai_model') || 'gemini-2.5-flash');
   const [rapidApiKey, setRapidApiKey] = useState(() => localStorage.getItem('scout_hub_rapidapi_key') || '');
   const [keysSaved, setKeysSaved] = useState(false);
   const isDark = theme === 'dark';
@@ -378,6 +401,8 @@ function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: st
     const normalizedRapidApiKeys = parsedRapidApiKeys.join('\n');
     onSaveWebhookUrl(url.trim());
     localStorage.setItem('scout_hub_gemini_key', geminiKey.trim());
+    localStorage.setItem('scout_hub_ai_base_url', aiBaseUrl.trim());
+    localStorage.setItem('scout_hub_ai_model', aiModel.trim());
     localStorage.setItem('scout_hub_rapidapi_key', normalizedRapidApiKeys);
     setRapidApiKey(normalizedRapidApiKeys);
     setTestStatus('idle');
@@ -412,7 +437,8 @@ function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: st
   const appsScriptCode = `const COLUMNS = [
   "Ngày lưu trữ", "Platform", "Tên", "ID", "Followers", "Avg View", "Avg Engagement",
   "SĐT", "Email", "Link Bio", "Link", "Bio", "Avatar", "Profile",
-  "Tier", "Vị trí", "Nhóm", "Campaign", "SOW", "Notes", "Rate History", "Rating", "Workflow"
+  "Tier", "Vị trí", "Nhóm", "Campaign", "SOW", "Notes", "Rate History", "Rating", "Workflow",
+  "Project Name", "Outreach Status", "Last Quoted At"
 ];
 
 function setupSheet() {
@@ -466,7 +492,10 @@ function doPost(e) {
       JSON.stringify(p.notes || []),
       JSON.stringify(p.rateHistory || []),
       p.rating || 0,
-      p.workflowStatus || 'New'
+      p.workflowStatus || 'New',
+      p.projectName || '',
+      p.outreachStatus || 'Not Started',
+      p.lastQuotedAt || ''
     ];
     
     var foundIdx = -1;
@@ -531,6 +560,9 @@ function doGet(e) {
       rateHistory: parseJSON(row[20], []),
       rating: Number(row[21]) || 0,
       workflowStatus: row[22] || 'New',
+      projectName: row[23] || '',
+      outreachStatus: row[24] || 'Not Started',
+      lastQuotedAt: row[25] || '',
       status: 'success'
     });
   }
@@ -580,17 +612,41 @@ function doGet(e) {
           </div>
           
           <div className="pt-3 border-t border-white/10 space-y-3">
-             <div>
-                <label className={`text-xs font-medium ${textS} mb-1 block`}>Gemini API Key (Xử lý AI Demographics & Insights)</label>
-                <input
-                  type="password"
-                  value={geminiKey}
-                  onChange={(e) => setGeminiKey(e.target.value)}
-                  placeholder="AIzaSy..."
-                  className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${inputBg}`}
-                />
-                <p className={`text-[10px] ${textM} mt-1`}>Key này chỉ được lưu trong `localStorage` của trình duyệt hiện tại, không được inject vào frontend build.</p>
-             </div>
+             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                 <div>
+                    <label className={`text-xs font-medium ${textS} mb-1 block`}>AI API Key (Google, OpenRouter, Groq...)</label>
+                    <input
+                      type="password"
+                      value={geminiKey}
+                      onChange={(e) => setGeminiKey(e.target.value)}
+                      placeholder="AIzaSy... hoặc sk-or-v1-..."
+                      className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${inputBg}`}
+                    />
+                 </div>
+                 <div>
+                    <label className={`text-xs font-medium ${textS} mb-1 block`}>AI Base URL (Tương thích OpenAI)</label>
+                    <input
+                      type="text"
+                      value={aiBaseUrl}
+                      onChange={(e) => setAiBaseUrl(e.target.value)}
+                      placeholder="https://generativelanguage.googleapis.com/v1beta/openai/"
+                      className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${inputBg}`}
+                    />
+                 </div>
+                 <div>
+                    <label className={`text-xs font-medium ${textS} mb-1 block`}>AI Model Name (Ví dụ: gemini-2.5-flash)</label>
+                    <input
+                      type="text"
+                      value={aiModel}
+                      onChange={(e) => setAiModel(e.target.value)}
+                      placeholder="gemini-2.5-flash"
+                      className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${inputBg}`}
+                    />
+                 </div>
+              </div>
+              <p className={`text-[10px] ${textM} mt-1`}>
+                Mặc định sử dụng Google Gemini API (Free, không cần liên kết thẻ ngân hàng nếu lấy key ở AI Studio). Bạn có thể đổi sang **OpenRouter** (base URL: `https://openrouter.ai/api/v1/`, model: `google/gemini-2.5-flash` hoặc các model miễn phí khác), **Groq** (`https://api.groq.com/openai/v1/`), hoặc chạy offline cục bộ bằng **Ollama** (`http://localhost:11434/v1/`).
+              </p>
              <div>
                 <label className={`text-xs font-medium ${textS} mb-1 block`}>RapidAPI Key Pool (Mỗi key 1 dòng, auto xoay vòng khi quota)</label>
                 <textarea

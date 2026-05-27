@@ -443,6 +443,92 @@ async function fetchTikTokMetricsFromRapidApi(
 export const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
+interface AIServerAnalysisResult {
+  phone: string;
+  email: string;
+  bioLink: string;
+  aiAnalysis: string;
+}
+
+async function runAIAnalysisServerSide(bio: string): Promise<AIServerAnalysisResult> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const defaultResult = { phone: '', email: '', bioLink: '', aiAnalysis: '' };
+  if (!apiKey || !bio || !bio.trim()) return defaultResult;
+
+  let baseUrl = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/';
+  if (!baseUrl.endsWith('/')) baseUrl += '/';
+
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+
+  try {
+    const prompt = `Bạn là chuyên gia phân tích dữ liệu profile mạng xã hội.
+Hãy đọc kỹ phần Tiểu sử (Bio) sau đây và trích xuất thông tin liên hệ một cách chính xác nhất.
+
+Nhiệm vụ:
+1. Trích xuất Số điện thoại (Phone): Tìm số điện thoại (đặc biệt là Việt Nam, ví dụ bắt đầu bằng +84 hoặc 0). Giải mã các dạng viết ẩn ý như chữ thành số (không chín ba...), viết cách quãng (0 9 8...), hoặc ký tự đặc biệt. Định dạng kết quả về dạng chuỗi số liên tục (ví dụ: 0987654321). Nếu không có, điền "N/A".
+2. Trích xuất Email: Tìm địa chỉ email. Giải mã các dạng chống bot như "name(at)gmail.com", "name[at]gmail.com", "name dot com". Định dạng về dạng email tiêu chuẩn (ví dụ: name@gmail.com). Nếu không có, điền "N/A".
+3. Trích xuất Link Bio: Tìm các liên kết ngoài (website, linktree, locket, shoppe...). Nếu không có, điền "N/A".
+4. Tóm tắt AI Analysis: Tóm tắt 1 câu cực kỳ ngắn gọn (tối đa 15 từ) về lĩnh vực chính (Niche) và tệp khán giả mục tiêu của kênh này.
+
+Bạn BẮT BUỘC phải trả về kết quả dưới dạng một đối tượng JSON duy nhất có định dạng chính xác sau đây, không thêm bất kỳ chữ nào khác ngoài JSON:
+{
+  "phone": "Số điện thoại hoặc N/A",
+  "email": "Email hoặc N/A",
+  "bioLink": "Link hoặc N/A",
+  "aiAnalysis": "Câu tóm tắt lĩnh vực & khán giả mục tiêu"
+}
+
+Bio để phân tích:
+"""${bio}"""`;
+    
+    const response = await fetch(`${baseUrl}chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+        max_tokens: 250,
+      }),
+    });
+
+    if (!response.ok) return defaultResult;
+    const resData: any = await response.json();
+    const textResponse = resData?.choices?.[0]?.message?.content?.trim() || '';
+    
+    let cleaned = textResponse.trim();
+    if (cleaned.startsWith('```json')) {
+      cleaned = cleaned.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    } else if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/^```\s*/, '').replace(/\s*```$/, '');
+    }
+    
+    try {
+      const data = JSON.parse(cleaned);
+      return {
+        phone: data.phone && data.phone !== 'N/A' ? String(data.phone).trim() : '',
+        email: data.email && data.email !== 'N/A' ? String(data.email).trim() : '',
+        bioLink: data.bioLink && data.bioLink !== 'N/A' ? String(data.bioLink).trim() : '',
+        aiAnalysis: data.aiAnalysis && data.aiAnalysis !== 'N/A' ? String(data.aiAnalysis).trim() : '',
+      };
+    } catch (e) {
+      console.error("Failed to parse AI JSON response, falling back to raw text:", textResponse);
+      return {
+        phone: '',
+        email: '',
+        bioLink: '',
+        aiAnalysis: textResponse.length < 100 ? textResponse : '',
+      };
+    }
+  } catch (e) {
+    console.error("Server-side AI analysis error:", e);
+    return defaultResult;
+  }
+}
+
 app.use(express.json({ limit: '10mb' }));
 
   // ============ TikTok Scrape API (RapidAPI Primary + HTML Fallback) ============
@@ -536,12 +622,13 @@ app.use(express.json({ limit: '10mb' }));
                 : await fetchTikTokMetricsFromRapidApi(username, apiKeys, rapidApiKey);
 
               const bio = user.signature || '';
+              const aiResult = await runAIAnalysisServerSide(bio);
               const contact = normalizeContact({
-                phone: user.phone,
-                email: user.bioEmail || user.email,
-                bioLink: user.bioLink?.link,
+                phone: user.phone || aiResult.phone,
+                email: user.bioEmail || user.email || aiResult.email,
+                bioLink: user.bioLink?.link || aiResult.bioLink,
                 text: bio,
-                source: 'api',
+                source: user.phone || user.bioEmail || user.email || user.bioLink?.link ? 'api' : (aiResult.phone || aiResult.email || aiResult.bioLink ? 'ai' : 'api'),
               });
               console.log(
                 `✓ RapidAPI success with key ${maskApiKey(rapidApiKey)} for @${username} (${fastMode ? 'fast' : 'full'} mode)`,
@@ -564,6 +651,7 @@ app.use(express.json({ limit: '10mb' }));
                 ...metrics,
                 rapidApiMode: fastMode ? 'fast' : 'full',
                 rapidApiKeyMask: maskApiKey(rapidApiKey),
+                aiAnalysis: aiResult.aiAnalysis,
                 cacheHit: false,
                 scrapedAt: new Date().toISOString(),
               };
@@ -626,12 +714,13 @@ app.use(express.json({ limit: '10mb' }));
                 const user = userInfo.user;
                 const stats = userInfo.stats;
                 const bio = user.signature || '';
+                const aiResult = await runAIAnalysisServerSide(bio);
                 const contact = normalizeContact({
-                  phone: user.phone,
-                  email: user.bioEmail,
-                  bioLink: user.bioLink?.link,
+                  phone: user.phone || aiResult.phone,
+                  email: user.bioEmail || aiResult.email,
+                  bioLink: user.bioLink?.link || aiResult.bioLink,
                   text: bio,
-                  source: 'fallback',
+                  source: user.phone || user.bioEmail || user.bioLink?.link ? 'fallback' : (aiResult.phone || aiResult.email || aiResult.bioLink ? 'ai' : 'fallback'),
                 });
                 const payload = {
                   bio,
@@ -650,6 +739,7 @@ app.use(express.json({ limit: '10mb' }));
                   ...emptyMetrics,
                   rapidApiMode: 'fallback',
                   partialWarnings: ['Dữ liệu lấy bằng fallback nên không có TikTok video metrics.'],
+                  aiAnalysis: aiResult.aiAnalysis,
                   cacheHit: false,
                   scrapedAt: new Date().toISOString(),
                 };
@@ -829,10 +919,15 @@ app.use(express.json({ limit: '10mb' }));
 
       const visibleText = getVisiblePageText($);
       const externalLinks = getFacebookExternalLinks($, fetchUrl);
+      
+      const aiResult = await runAIAnalysisServerSide(description || nickname || visibleText || '');
+      
       const fbContact = normalizeContact({
-        bioLink: externalLinks[0] || '',
+        phone: aiResult.phone,
+        email: aiResult.email,
+        bioLink: externalLinks[0] || aiResult.bioLink,
         text: [nickname, title, description, visibleText].filter(Boolean).join(' '),
-        source: 'regex',
+        source: aiResult.phone || aiResult.email ? 'ai' : 'regex',
       });
 
       const payload = {
@@ -847,6 +942,7 @@ app.use(express.json({ limit: '10mb' }));
         bioLink: fbContact.bioLink,
         contactSource: fbContact.contactSource,
         contactWarnings: fbContact.contactWarnings,
+        aiAnalysis: aiResult.aiAnalysis,
         cacheHit: false,
         scrapedAt: new Date().toISOString(),
       };

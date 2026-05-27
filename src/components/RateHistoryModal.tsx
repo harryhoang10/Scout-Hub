@@ -1,6 +1,20 @@
 import React, { useState } from 'react';
 import { RestoredData } from '../types';
-import { X, Plus, Trash2, Calendar, DollarSign, History } from 'lucide-react';
+import { X, Plus, Trash2, Calendar, DollarSign, History, MessageSquare, Loader2, Sparkles } from 'lucide-react';
+
+function cleanJsonResponse(text: string): string {
+  let cleaned = text.trim();
+  const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (jsonMatch) {
+    return jsonMatch[1].trim();
+  }
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    return cleaned.slice(firstBrace, lastBrace + 1).trim();
+  }
+  return cleaned;
+}
 
 interface RateHistoryModalProps {
   isOpen: boolean;
@@ -15,6 +29,11 @@ export const RateHistoryModal: React.FC<RateHistoryModalProps> = ({ isOpen, onCl
   const [note, setNote] = useState('');
   const [sow, setSow] = useState<string[]>([]);
   const [customSow, setCustomSow] = useState('');
+  const [activeTab, setActiveTab] = useState<'manual' | 'ai_parse'>('manual');
+  const [rawMessage, setRawMessage] = useState('');
+  const [isParsing, setIsParsing] = useState(false);
+  const [parsedItems, setParsedItems] = useState<{name: string; price: number}[]>([]);
+  const [parsedNote, setParsedNote] = useState('');
   const SOW_OPTIONS = ['Photo Post', 'Video Post', 'SDHA (KĐQ)', 'SDHA (ĐQ)'];
 
   if (!isOpen || !profile) return null;
@@ -81,7 +100,32 @@ export const RateHistoryModal: React.FC<RateHistoryModalProps> = ({ isOpen, onCl
           </button>
         </div>
 
-        {/* Create Form */}
+        {/* Tab Switcher */}
+        <div className={`flex border-b ${borderC}`}>
+          <button
+            onClick={() => setActiveTab('manual')}
+            className={`flex-1 px-4 py-2.5 text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
+              activeTab === 'manual'
+                ? isDark ? 'text-violet-400 border-b-2 border-violet-400 bg-violet-500/5' : 'text-violet-600 border-b-2 border-violet-600 bg-violet-50'
+                : isDark ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            <Plus className="h-3.5 w-3.5" /> Nhập thủ công
+          </button>
+          <button
+            onClick={() => setActiveTab('ai_parse')}
+            className={`flex-1 px-4 py-2.5 text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
+              activeTab === 'ai_parse'
+                ? isDark ? 'text-emerald-400 border-b-2 border-emerald-400 bg-emerald-500/5' : 'text-emerald-600 border-b-2 border-emerald-600 bg-emerald-50'
+                : isDark ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            <MessageSquare className="h-3.5 w-3.5" /> Paste tin nhắn (AI)
+          </button>
+        </div>
+
+        {/* Manual Form */}
+        {activeTab === 'manual' && (
         <div className={`p-5 border-b ${borderC} space-y-3`}>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -156,6 +200,94 @@ export const RateHistoryModal: React.FC<RateHistoryModalProps> = ({ isOpen, onCl
             <Plus className="h-4 w-4" /> Thêm mức giá mới
           </button>
         </div>
+        )}
+
+        {/* AI Parse Tab */}
+        {activeTab === 'ai_parse' && (
+        <div className={`p-5 border-b ${borderC} space-y-3`}>
+          <textarea
+            value={rawMessage}
+            onChange={(e) => setRawMessage(e.target.value)}
+            placeholder={`Paste tin nhắn báo giá vào đây...\n\nVD: "giá video 5tr, photo 2tr, SDHA KĐQ 1.5tr"`}
+            rows={4}
+            className={`w-full px-3 py-2 text-sm rounded-lg border resize-none ${inputBg}`}
+          />
+          {parsedItems.length > 0 && (
+            <div className="space-y-1.5">
+              {parsedItems.map((item, idx) => (
+                <div key={idx} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs ${isDark ? 'bg-emerald-500/10 text-emerald-300' : 'bg-emerald-50 text-emerald-700'}`}>
+                  <span className="flex-1 font-medium">{item.name}</span>
+                  <span className="font-bold">{item.price.toLocaleString('vi-VN')} đ</span>
+                  <button onClick={() => setParsedItems(prev => prev.filter((_, i) => i !== idx))} className="opacity-60 hover:opacity-100">
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+              {parsedNote && <p className={`text-[11px] ${textS}`}>📝 {parsedNote}</p>}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={async () => {
+                if (!rawMessage.trim()) return;
+                setIsParsing(true);
+                setParsedItems([]);
+                const aiKey = localStorage.getItem('scout_hub_gemini_key') || '';
+                if (!aiKey) { alert('Chưa cấu hình AI API Key.'); setIsParsing(false); return; }
+                let baseUrl = localStorage.getItem('scout_hub_ai_base_url') || 'https://generativelanguage.googleapis.com/v1beta/openai/';
+                if (!baseUrl.endsWith('/')) baseUrl += '/';
+                const model = localStorage.getItem('scout_hub_ai_model') || 'gemini-2.5-flash';
+                try {
+                  const res = await fetch(`${baseUrl}chat/completions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${aiKey}` },
+                    body: JSON.stringify({
+                      model,
+                      messages: [{ role: 'user', content: `Trích xuất SOW và giá từ tin nhắn báo giá sau. Trả về JSON duy nhất:\n{"items":[{"name":"Tên SOW","price":5000000}],"note":"Ghi chú nếu có"}\n\nTin nhắn:\n"""\n${rawMessage}\n"""` }],
+                      temperature: 0.2, max_tokens: 400,
+                    }),
+                  });
+                  if (!res.ok) { alert('Lỗi API'); setIsParsing(false); return; }
+                  const data = await res.json();
+                  const text = data?.choices?.[0]?.message?.content?.trim() || '';
+                  const cleanedJson = cleanJsonResponse(text);
+                  const parsed = JSON.parse(cleanedJson);
+                  setParsedItems(parsed.items || []);
+                  setParsedNote(parsed.note || '');
+                } catch (e: any) { alert('Lỗi parse: ' + e.message); }
+                setIsParsing(false);
+              }}
+              disabled={isParsing || !rawMessage.trim()}
+              className={`flex-1 py-2 flex items-center justify-center gap-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
+            >
+              {isParsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {isParsing ? 'Đang phân tích...' : 'Phân tích AI'}
+            </button>
+            {parsedItems.length > 0 && (
+              <button
+                onClick={() => {
+                  const today = new Date();
+                  const dateStr = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
+                  const newRates = parsedItems.filter(i => i.price > 0 && i.name).map(item => ({
+                    id: Math.random().toString(36).substring(7),
+                    date: dateStr,
+                    price: item.price,
+                    note: parsedNote || undefined,
+                    sow: [item.name],
+                  }));
+                  onUpdateRates(profile.id, [...history, ...newRates]);
+                  setRawMessage('');
+                  setParsedItems([]);
+                  setParsedNote('');
+                }}
+                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${btnPrimary}`}
+              >
+                Thêm tất cả ({parsedItems.length})
+              </button>
+            )}
+          </div>
+        </div>
+        )}
 
         {/* History List */}
         <div className="p-5 overflow-y-auto min-h-[200px]">

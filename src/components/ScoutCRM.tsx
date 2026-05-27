@@ -1,15 +1,17 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import {
   Trash2, CopyX, Star, Users, Briefcase, FileDown,
-  LayoutGrid, List, Search, ArrowUpDown, Loader2, Link as LinkIcon, Phone, Mail, Filter, Upload, RefreshCw, X, CheckCircle2, StickyNote, History, ChevronDown, Globe, Bell, BellOff, Eye
+  LayoutGrid, List, Search, ArrowUpDown, Loader2, Link as LinkIcon, Phone, Mail, Filter, Upload, RefreshCw, X, CheckCircle2, StickyNote, History, ChevronDown, Globe, Bell, BellOff, Eye, Send, MessageSquare
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { RestoredData, Tier, WorkflowStatus } from '../types';
+import { RestoredData, Tier, WorkflowStatus, OutreachStatus } from '../types';
 import { TagSelector } from './TagSelector';
 import { upsertToSheet, deleteFromSheet } from '../lib/api';
 import { CompareModal } from './CompareModal';
 import { RateHistoryModal } from './RateHistoryModal';
 import { CampaignBoard } from './CampaignBoard';
+import { OutreachComposer } from './OutreachComposer';
+import { QuotationParser } from './QuotationParser';
 import { mergeProfileBatch } from '../lib/profileChangeDetection';
 import { classifyProfile, findDuplicateGroups, mergeDuplicateGroup } from '../lib/profileIntelligence';
 
@@ -42,9 +44,12 @@ interface ScoutCRMProps {
   webhookUrl?: string;
   theme?: string;
   onRefreshProfiles?: (urls: string[]) => void;
+  projectName?: string;
 }
 
-export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfiles }: ScoutCRMProps) {
+const OUTREACH_STATUSES: OutreachStatus[] = ['Not Started', 'Drafted', 'Sent', 'Replied', 'Negotiating', 'Confirmed', 'Declined'];
+
+export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfiles, projectName }: ScoutCRMProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<SortField>('saveDate');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
@@ -56,6 +61,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
   const [filterLifecycle, setFilterLifecycle] = useState<LifecycleFilter>('all');
   const [filterWorkflowStatus, setFilterWorkflowStatus] = useState<string>('all');
   const [filterNiche, setFilterNiche] = useState<string>('all');
+  const [filterOutreachStatus, setFilterOutreachStatus] = useState<string>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState('');
@@ -67,6 +73,12 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
 
   // Rate History Modal State
   const [activeRateProfileId, setActiveRateProfileId] = useState<string | null>(null);
+
+  // Outreach & Quotation Modal State
+  const [showOutreachComposer, setShowOutreachComposer] = useState(false);
+  const [outreachTargets, setOutreachTargets] = useState<RestoredData[]>([]);
+  const [showQuotationParser, setShowQuotationParser] = useState(false);
+  const [quotationTarget, setQuotationTarget] = useState<RestoredData | null>(null);
 
   const isDark = theme === 'dark';
   const cardBg = isDark ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-white border-slate-200';
@@ -277,6 +289,9 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
       'Rate History': (row.rateHistory || []).map(r => `${r.price.toLocaleString('vi-VN')}đ (${r.date}${r.note ? ' - ' + r.note : ''})`).join(' | '),
       'Rating': row.rating || 0,
       'Workflow': row.workflowStatus || 'New',
+      'Project Name': row.projectName || '',
+      'Outreach Status': row.outreachStatus || 'Not Started',
+      'Last Quoted At': row.lastQuotedAt || '',
       'Profile Niche': row.profileNiche || '',
       'Audience Hint': row.audienceHint || '',
       'Classification Confidence': row.classificationConfidence !== undefined ? Math.round(row.classificationConfidence * 100) + '%' : '',
@@ -494,6 +509,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
     if (filterCampaign !== 'all') result = result.filter(r => r.campaign.includes(filterCampaign));
     if (filterWorkflowStatus !== 'all') result = result.filter(r => (r.workflowStatus || 'New') === filterWorkflowStatus);
     if (filterNiche !== 'all') result = result.filter(r => (r.profileNiche || 'Unclassified') === filterNiche);
+    if (filterOutreachStatus !== 'all') result = result.filter(r => (r.outreachStatus || 'Not Started') === filterOutreachStatus);
     if (filterHasContact === 'phone') result = result.filter(r => r.phone && r.phone !== 'N/A' && r.phone !== '-');
     else if (filterHasContact === 'email') result = result.filter(r => r.email && r.email !== 'N/A' && r.email !== '-');
     else if (filterHasContact === 'both') result = result.filter(r => (r.phone && r.phone !== 'N/A' && r.phone !== '-') && (r.email && r.email !== 'N/A' && r.email !== '-'));
@@ -528,7 +544,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
       return 0;
     });
     return result;
-  }, [data, searchTerm, sortField, sortOrder, filterPlatform, filterTier, filterCampaign, filterWorkflowStatus, filterNiche, filterHasContact, filterLifecycle, duplicateProfileIds]);
+  }, [data, searchTerm, sortField, sortOrder, filterPlatform, filterTier, filterCampaign, filterWorkflowStatus, filterNiche, filterOutreachStatus, filterHasContact, filterLifecycle, duplicateProfileIds]);
 
   const formatFollowers = (val: string | number | undefined): string => {
     if (val === undefined || val === null || val === '' || val === 'N/A') return '';
@@ -585,6 +601,18 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
         >
           <History className="h-2.5 w-2.5" /> Changed
         </button>
+      )}
+      {row.outreachStatus && row.outreachStatus !== 'Not Started' && (
+        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium ${
+          row.outreachStatus === 'Drafted' ? (isDark ? 'bg-amber-500/15 text-amber-300' : 'bg-amber-50 text-amber-700') :
+          row.outreachStatus === 'Sent' ? (isDark ? 'bg-blue-500/15 text-blue-300' : 'bg-blue-50 text-blue-700') :
+          row.outreachStatus === 'Replied' ? (isDark ? 'bg-cyan-500/15 text-cyan-300' : 'bg-cyan-50 text-cyan-700') :
+          row.outreachStatus === 'Confirmed' ? (isDark ? 'bg-emerald-500/15 text-emerald-300' : 'bg-emerald-50 text-emerald-700') :
+          row.outreachStatus === 'Declined' ? (isDark ? 'bg-red-500/15 text-red-300' : 'bg-red-50 text-red-700') :
+          isDark ? 'bg-orange-500/15 text-orange-300' : 'bg-orange-50 text-orange-700'
+        }`}>
+          <Send className="h-2.5 w-2.5" /> {row.outreachStatus}
+        </span>
       )}
     </div>
   );
@@ -650,6 +678,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
     setFilterLifecycle('all');
     setFilterWorkflowStatus('all');
     setFilterNiche('all');
+    setFilterOutreachStatus('all');
   };
 
   const applyStatFilter = (filter: 'all' | 'tiktok' | 'facebook' | 'phone' | 'email' | 'watchlist' | 'duplicates') => {
@@ -840,6 +869,11 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
               <option value="all">Tất cả Workflow</option>
               {WORKFLOW_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
             </select>
+            <select value={filterOutreachStatus} onChange={(e) => setFilterOutreachStatus(e.target.value)}
+              className={`px-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-violet-500/50 cursor-pointer ${inputBg}`}>
+              <option value="all">Tất cả Outreach</option>
+              {OUTREACH_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
+            </select>
             <select value={filterNiche} onChange={(e) => setFilterNiche(e.target.value)}
               className={`px-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-violet-500/50 cursor-pointer ${inputBg}`}>
               <option value="all">Tất cả Niche</option>
@@ -898,6 +932,23 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
                             <button key={status} onClick={() => { bulkSetWorkflowStatus(status); setShowBulkActions(false); }}
                               className={`w-full text-left px-3 py-1 text-xs ${dropItemHover} ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{status}</button>
                           ))}
+                        </div>
+                        <div className={`border-l ${borderC} pl-2`}>
+                          <div className={`text-[10px] font-medium px-3 py-1 ${textS}`}>Actions</div>
+                          <button onClick={() => {
+                            setOutreachTargets(data.filter(p => selectedIds.has(p.id)));
+                            setShowOutreachComposer(true);
+                            setShowBulkActions(false);
+                          }} className={`w-full text-left px-3 py-1 text-xs ${dropItemHover} ${isDark ? 'text-fuchsia-300' : 'text-fuchsia-600'}`}>
+                            ✉️ Soạn Outreach
+                          </button>
+                          <button onClick={() => {
+                            setQuotationTarget(null);
+                            setShowQuotationParser(true);
+                            setShowBulkActions(false);
+                          }} className={`w-full text-left px-3 py-1 text-xs ${dropItemHover} ${isDark ? 'text-emerald-300' : 'text-emerald-600'}`}>
+                            📨 Parse báo giá
+                          </button>
                         </div>
                       </div>
                     </>
@@ -1172,6 +1223,12 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
                     </td>
                     <td className="px-3 py-3 text-center">
                       <div className="flex items-center justify-center gap-1">
+                        <button onClick={() => { setOutreachTargets([row]); setShowOutreachComposer(true); }} className={`${isDark ? 'text-slate-600 hover:text-fuchsia-400' : 'text-slate-300 hover:text-fuchsia-500'} transition-colors`} title="Soạn Outreach">
+                          <Send className="h-3.5 w-3.5" />
+                        </button>
+                        <button onClick={() => { setQuotationTarget(row); setShowQuotationParser(true); }} className={`${isDark ? 'text-slate-600 hover:text-emerald-400' : 'text-slate-300 hover:text-emerald-500'} transition-colors`} title="Parse báo giá">
+                          <MessageSquare className="h-3.5 w-3.5" />
+                        </button>
                         <button onClick={() => toggleWatchlist(row)} className={`${row.isWatchlisted ? (isDark ? 'text-violet-300 hover:text-violet-200' : 'text-violet-600 hover:text-violet-500') : (isDark ? 'text-slate-600 hover:text-violet-300' : 'text-slate-300 hover:text-violet-500')} transition-colors`} title={row.isWatchlisted ? 'Bỏ Watchlist' : 'Thêm Watchlist'}>
                           {row.isWatchlisted ? <BellOff className="h-3.5 w-3.5" /> : <Bell className="h-3.5 w-3.5" />}
                         </button>
@@ -1246,6 +1303,36 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
         onUpdateRates={(id, rates) => updateRow(id, 'rateHistory', rates)}
         theme={theme}
       />
+
+      {showOutreachComposer && (
+        <OutreachComposer
+          profiles={outreachTargets}
+          projectName={projectName}
+          onClose={() => setShowOutreachComposer(false)}
+          onUpdateProfile={(id, updates) => {
+            const newData = data.map(r => r.id === id ? { ...r, ...updates } : r);
+            onUpdateData(newData);
+            const editedRow = newData.find(r => r.id === id);
+            if (webhookUrl && editedRow) upsertToSheet(webhookUrl, [editedRow]);
+          }}
+          theme={theme}
+        />
+      )}
+
+      {showQuotationParser && (
+        <QuotationParser
+          profile={quotationTarget}
+          allProfiles={data}
+          onClose={() => { setShowQuotationParser(false); setQuotationTarget(null); }}
+          onUpdateProfile={(id, updates) => {
+            const newData = data.map(r => r.id === id ? { ...r, ...updates } : r);
+            onUpdateData(newData);
+            const editedRow = newData.find(r => r.id === id);
+            if (webhookUrl && editedRow) upsertToSheet(webhookUrl, [editedRow]);
+          }}
+          theme={theme}
+        />
+      )}
     </div>
   );
 }
