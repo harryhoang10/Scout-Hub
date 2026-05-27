@@ -210,7 +210,7 @@ function classifyExtractorError(error: Error & { code?: string }): ErrorCategory
   if (/invalid|không hợp lệ|url is required|vui lòng nhập link/.test(text)) {
     return 'invalid';
   }
-  if (/blocked|403|503|unavailable|chặn/.test(text)) {
+  if (code === 'SERVERLESS_CRASH' || /blocked|403|503|unavailable|chặn|phản hồi không hợp lệ/.test(text)) {
     return 'blocked';
   }
   if (/network|failed to fetch|timeout|timed out|econn|socket/.test(text)) {
@@ -705,9 +705,18 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefil
       body: JSON.stringify({ url, fastMode: isFastMode, forceRefresh: refresh }),
     });
     if (!response.ok) {
-      const err = await response.json();
-      const requestError = new Error(err.error || 'Lỗi scrape TikTok');
-      (requestError as Error & { code?: string }).code = err.code;
+      let errMsg = 'Lỗi scrape TikTok';
+      let errCode = '';
+      try {
+        const err = await response.json();
+        errMsg = err.error || errMsg;
+        errCode = err.code || errCode;
+      } catch (e) {
+        errMsg = 'Serverless Function trả về phản hồi không hợp lệ (HTTP ' + response.status + '). Vui lòng thử dùng Bookmarklet trích xuất lẻ hoặc cấu hình RapidAPI Key.';
+        errCode = 'SERVERLESS_CRASH';
+      }
+      const requestError = new Error(errMsg);
+      (requestError as Error & { code?: string }).code = errCode;
       throw requestError;
     }
     const data = await response.json();
@@ -773,8 +782,19 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefil
       body: JSON.stringify({ url, forceRefresh: refresh }),
     });
     if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.error || 'Lỗi extract Facebook');
+      let errMsg = 'Lỗi extract Facebook';
+      let errCode = '';
+      try {
+        const err = await response.json();
+        errMsg = err.error || errMsg;
+        errCode = err.code || errCode;
+      } catch (e) {
+        errMsg = 'Facebook chặn IP Cloud của Netlify (HTTP ' + response.status + '). Vui lòng kéo và dùng Bookmarklet trích xuất 1-Click để đạt tỉ lệ thành công 100%!';
+        errCode = 'SERVERLESS_CRASH';
+      }
+      const requestError = new Error(errMsg);
+      (requestError as Error & { code?: string }).code = errCode;
+      throw requestError;
     }
     const data = await response.json();
 
@@ -971,6 +991,39 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefil
 
   return (
     <div className="space-y-5">
+      {/* Premium Notification Banner for Serverless/Netlify Deployment */}
+      <div className={`rounded-xl border p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+        isDark 
+          ? 'bg-gradient-to-r from-violet-950/20 to-fuchsia-950/20 border-violet-500/20' 
+          : 'bg-gradient-to-r from-violet-50 to-fuchsia-50 border-violet-100'
+      }`}>
+        <div className="flex items-start gap-3">
+          <div className={`p-2 rounded-lg ${isDark ? 'bg-violet-500/10 text-violet-400' : 'bg-violet-100 text-violet-700'}`}>
+            <Bookmark className="h-5 w-5 animate-pulse" />
+          </div>
+          <div>
+            <h4 className={`text-sm font-semibold ${textP}`}>💡 Mẹo trích xuất thành công 100% không lo bị chặn</h4>
+            <p className={`text-xs ${textS} mt-0.5`}>
+              Do IP của Netlify/Cloud dễ bị Facebook chặn, hãy dùng **Tiện ích Bookmarklet (Trích xuất nhanh 1-Click)** khi trích xuất profile lẻ. Bấm 1 click ngay trên profile đang xem để điền thẳng dữ liệu vào CRM!
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <a
+            href={`javascript:(function(){try{var url=window.location.href;var host=window.location.hostname;var isTikTok=/tiktok\\.com/i.test(host);var isFacebook=/(facebook\\.com|fb\\.com|fb\\.watch)/i.test(host);if(!isTikTok&&!isFacebook){alert('Scout Hub chỉ hỗ trợ TikTok hoặc Facebook profile!');return;}var data={url:url,scrapedAt:new Date().toISOString()};if(isTikTok){data.platform='TikTok';var nickEl=document.querySelector('[data-e2e="user-title"]')||document.querySelector('h1');data.nickname=nickEl?nickEl.textContent.trim():'';var subEl=document.querySelector('[data-e2e="user-subtitle"]')||document.querySelector('h2');if(subEl){data.channelId=subEl.textContent.trim().replace(/^@/,'');}else{var match=url.match(/@([^/?#]+)/);data.channelId=match?match[1]:'';}var followersEl=document.querySelector('[data-e2e="followers-count"]');data.followers=followersEl?followersEl.textContent.trim():'';var followingEl=document.querySelector('[data-e2e="following-count"]');data.following=followingEl?followingEl.textContent.trim():'';var likesEl=document.querySelector('[data-e2e="likes-count"]');data.likes=likesEl?likesEl.textContent.trim():'';var bioEl=document.querySelector('[data-e2e="user-desc"]');data.bio=bioEl?bioEl.textContent.trim():'';var imgEl=document.querySelector('[class*="Avatar"] img')||document.querySelector('img[src*="avatar"]');data.profilePic=imgEl?imgEl.src:'';var linkEl=document.querySelector('[data-e2e="user-link"] a')||document.querySelector('[data-e2e="user-link"]');data.bioLink=linkEl?linkEl.textContent.trim()||linkEl.href:'';}else if(isFacebook){data.platform='Facebook';var h1El=document.querySelector('h1');data.nickname=h1El?h1El.textContent.trim():'';var foundFollowers='';var bodyText=document.body.innerText;var pattern=/(\\d[\\d,.]*\\s*(?:triệu|nghìn|ngàn|[KkMm])?)\\s*(?:người theo dõi|followers|thành viên|members|lượt thích|likes)/i;var match=bodyText.match(pattern);if(match&&match[1]){foundFollowers=match[1].trim();}else{var els=document.querySelectorAll('a[href*="followers"],span');for(var i=0;i<els.length;i++){var text=els[i].textContent||'';if(/followers|người theo dõi|likes|thành viên/i.test(text)){var m=text.match(/[\\d,.]+\\s*[KkMm]?/);if(m){foundFollowers=m[0].trim();break;}}}}data.followers=foundFollowers;var spans=document.querySelectorAll('span');var introEl=document.querySelector('div[class*="x193iq5w"]')||document.querySelector('span[class*="x193iq5w"]');if(!introEl){for(var i=0;i<spans.length;i++){if(spans[i].textContent.includes('Giới thiệu')||spans[i].textContent.includes('Intro')){introEl=spans[i];break;}}}data.bio=introEl?introEl.textContent.trim():'';var avatarImg=document.querySelector('svg[role="img"] image')||document.querySelector('g image')||document.querySelector('img[src*="profile"]');data.profilePic=avatarImg?(avatarImg.getAttribute('xlink:href')||avatarImg.src):'';}var textToScan=[data.nickname,data.bio,document.body.innerText].join(' ');var emailMatch=textToScan.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);data.email=emailMatch?emailMatch[0]:'';var phoneMatch=textToScan.match(/(?:\\+84|0)(?:\\s*\\d){9,10}/);data.phone=phoneMatch?phoneMatch[0].replace(/\\s+/g,''):'';var jsonStr=JSON.stringify(data);var base64=btoa(encodeURIComponent(jsonStr).replace(/%([0-9A-F]{2})/g,function(match,p1){return String.fromCharCode(parseInt(p1,16));}));var target=window.location.origin+'/?addProfileData='+encodeURIComponent(base64);var win=window.open(target,'_blank');if(win){win.focus();}else{window.location.href=target;}}catch(err){alert('Lỗi trích xuất: '+err.message);}})();`}
+            onClick={(e) => e.preventDefault()}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border flex items-center gap-1 ${
+              isDark 
+                ? 'bg-violet-500/10 border-violet-500/20 text-violet-200 hover:bg-violet-500/20' 
+                : 'bg-violet-50 border-violet-200 text-violet-700 hover:bg-violet-100'
+            }`}
+            title="Kéo nút này lên thanh bookmark của trình duyệt"
+          >
+            🔖 Kéo tôi lên Bookmark bar
+          </a>
+        </div>
+      </div>
+
       {/* Input Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Manual Input */}

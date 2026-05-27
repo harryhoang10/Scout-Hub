@@ -5,9 +5,28 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { normalizeContact } from './src/lib/contactParser';
 
+const isServerlessRuntime = Boolean(
+  process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME,
+);
+
+let currentFilename = "";
+let currentDirname = "";
+
+try {
+  currentFilename = fileURLToPath(import.meta.url);
+  currentDirname = path.dirname(currentFilename);
+} catch (e) {
+  currentFilename = typeof __filename !== 'undefined' ? __filename : '';
+  currentDirname = typeof __dirname !== 'undefined' ? __dirname : '';
+}
+
 let stealthBrowser: any = null;
 let puppeteerInstance: any = null;
 async function getStealthBrowser() {
+  if (isServerlessRuntime) {
+    throw new Error("Puppeteer is disabled in serverless runtime environments (Netlify/Vercel).");
+  }
+
   if (!puppeteerInstance) {
     const [{ default: puppeteer }, { default: StealthPlugin }] = await Promise.all([
       import('puppeteer-extra'),
@@ -26,9 +45,6 @@ async function getStealthBrowser() {
 
   return stealthBrowser;
 }
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 type RapidApiKeyState = {
   key: string;
@@ -57,9 +73,6 @@ type ScrapeCacheEntry<T = any> = {
 const RAPIDAPI_HOST = 'tiktok-scraper7.p.rapidapi.com';
 const RAPIDAPI_DEFAULT_COOLDOWN_MS = Number(process.env.RAPIDAPI_COOLDOWN_MS || 15 * 60 * 1000);
 const SCRAPE_CACHE_TTL_MS = Number(process.env.SCRAPE_CACHE_TTL_MS || 6 * 60 * 60 * 1000);
-const isServerlessRuntime = Boolean(
-  process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME,
-);
 const rapidApiKeyPool = new Map<string, RapidApiKeyState>();
 const scrapeCache = new Map<string, ScrapeCacheEntry>();
 let rapidApiNextKeyIndex = 0;
@@ -901,12 +914,12 @@ app.use(express.json({ limit: '10mb' }));
     });
   } else {
     // Serve static files from the React app
-    app.use(express.static(path.join(__dirname, "dist")));
+    app.use(express.static(path.join(currentDirname, "dist")));
     
     // The "catchall" handler: for any request that doesn't
     // match one above, send back React's index.html file.
     app.get('*', (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
+      res.sendFile(path.join(currentDirname, "dist", "index.html"));
     });
   }
 
