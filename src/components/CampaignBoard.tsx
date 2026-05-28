@@ -109,7 +109,14 @@ export const CampaignBoard: React.FC<CampaignBoardProps> = ({ data, campaigns, t
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <div className={`text-sm font-medium truncate ${textP}`}>{profile.nickname || '-'}</div>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <div className={`text-sm font-medium truncate ${textP}`}>{profile.nickname || '-'}</div>
+                        {profile.projectName && (
+                          <span className={`inline-flex items-center gap-0.5 px-1 py-0.2 rounded text-[8px] font-bold tracking-wider uppercase shrink-0 ${isDark ? 'bg-violet-500/25 text-violet-300 border border-violet-500/30' : 'bg-violet-50 text-violet-700 border border-violet-200'}`} title={`Dự án: ${profile.projectName}`}>
+                            💼 {profile.projectName}
+                          </span>
+                        )}
+                      </div>
                       <div className="flex justify-between items-center mt-0.5">
                         <span className={`text-[10px] ${textS} truncate max-w-[80px]`}>{profile.channelId ? `@${profile.channelId}` : ''}</span>
                         <span className={`text-[10px] font-semibold ${textP}`}>{formatFollowers(profile.followers)}</span>

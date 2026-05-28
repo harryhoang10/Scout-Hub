@@ -106,6 +106,9 @@ export interface RestoredData extends ProfileData {
   workflowStatus?: WorkflowStatus;
   outreachStatus?: OutreachStatus;
   projectName?: string;
+  outreachDraftSubject?: string;
+  outreachDraftBody?: string;
+  outreachHistory?: { id: string; subject: string; body: string; sentAt: string }[];
   lastQuotedAt?: string;
   lastUpdated?: string;
   isWatchlisted?: boolean;
@@ -114,3 +117,17 @@ export interface RestoredData extends ProfileData {
   lastChangedAt?: string;
   changeHistory?: ProfileChangeRecord[];
 }
+
+export interface SavedView {
+  id: string;
+  name: string;
+  platform: string;
+  tier: string;
+  campaign: string;
+  workflowStatus: string;
+  niche: string;
+  hasContact: string;
+  searchTerm: string;
+  projectName?: string;
+}
+

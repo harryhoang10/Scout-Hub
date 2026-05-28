@@ -126,9 +126,11 @@ function normalizeUrl(value?: string | null) {
 
   try {
     const url = new URL(withProtocol);
+    const trackers = ['fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'igshid', '_r', 'utm_content', 'ttclid'];
+    trackers.forEach(t => url.searchParams.delete(t));
     return url.toString();
   } catch {
-    return '';
+    return withProtocol.split('?')[0];
   }
 }
 

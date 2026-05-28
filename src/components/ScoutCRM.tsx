@@ -4,14 +4,15 @@ import {
   LayoutGrid, List, Search, ArrowUpDown, Loader2, Link as LinkIcon, Phone, Mail, Filter, Upload, RefreshCw, X, CheckCircle2, StickyNote, History, ChevronDown, Globe, Bell, BellOff, Eye, Send, MessageSquare
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { RestoredData, Tier, WorkflowStatus, OutreachStatus } from '../types';
+import { RestoredData, Tier, WorkflowStatus, OutreachStatus, SavedView } from '../types';
 import { TagSelector } from './TagSelector';
 import { upsertToSheet, deleteFromSheet } from '../lib/api';
 import { CompareModal } from './CompareModal';
-import { RateHistoryModal } from './RateHistoryModal';
 import { CampaignBoard } from './CampaignBoard';
 import { OutreachComposer } from './OutreachComposer';
 import { QuotationParser } from './QuotationParser';
+import { KPIDashboardModal } from './KPIDashboardModal';
+import { ProfileDrawer } from './ProfileDrawer';
 import { mergeProfileBatch } from '../lib/profileChangeDetection';
 import { classifyProfile, findDuplicateGroups, mergeDuplicateGroup } from '../lib/profileIntelligence';
 
@@ -62,23 +63,217 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
   const [filterWorkflowStatus, setFilterWorkflowStatus] = useState<string>('all');
   const [filterNiche, setFilterNiche] = useState<string>('all');
   const [filterOutreachStatus, setFilterOutreachStatus] = useState<string>('all');
+  const [filterProjectName, setFilterProjectName] = useState<string>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState('');
   const [showBulkActions, setShowBulkActions] = useState(false);
   const [showCompareModal, setShowCompareModal] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [activeChangeProfileId, setActiveChangeProfileId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Rate History Modal State
-  const [activeRateProfileId, setActiveRateProfileId] = useState<string | null>(null);
+  // Profile Detail Drawer State
+  const [selectedProfileIdForDrawer, setSelectedProfileIdForDrawer] = useState<string | null>(null);
+  const [drawerDefaultTab, setDrawerDefaultTab] = useState<'overview' | 'details' | 'notes_rates' | 'history'>('overview');
+
+  const activeDrawerProfile = useMemo(() => {
+    return selectedProfileIdForDrawer ? data.find(p => p.id === selectedProfileIdForDrawer) || null : null;
+  }, [selectedProfileIdForDrawer, data]);
 
   // Outreach & Quotation Modal State
   const [showOutreachComposer, setShowOutreachComposer] = useState(false);
   const [outreachTargets, setOutreachTargets] = useState<RestoredData[]>([]);
   const [showQuotationParser, setShowQuotationParser] = useState(false);
   const [quotationTarget, setQuotationTarget] = useState<RestoredData | null>(null);
+  const [showKPIDashboard, setShowKPIDashboard] = useState(false);
+  const [showCrmToolsDropdown, setShowCrmToolsDropdown] = useState(false);
+
+  // Campaign Fit Score & Saved Views State
+  const [scoreBreakdownProfileId, setScoreBreakdownProfileId] = useState<string | null>(null);
+  const [savedViews, setSavedViews] = useState<SavedView[]>(() => {
+    try {
+      const raw = localStorage.getItem('scout_hub_saved_views');
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [newViewName, setNewViewName] = useState('');
+  const [showSaveViewInput, setShowSaveViewInput] = useState(false);
+  const [showSavedViewsDropdown, setShowSavedViewsDropdown] = useState(false);
+
+  // Saved Views Handlers
+  const handleSaveCurrentView = () => {
+    if (!newViewName.trim()) return;
+    const newView: SavedView = {
+      id: `view_${Date.now()}`,
+      name: newViewName.trim(),
+      platform: filterPlatform,
+      tier: filterTier,
+      campaign: filterCampaign,
+      workflowStatus: filterWorkflowStatus,
+      niche: filterNiche,
+      hasContact: filterHasContact,
+      searchTerm: searchTerm,
+      projectName: filterProjectName
+    };
+    const updated = [...savedViews, newView];
+    setSavedViews(updated);
+    localStorage.setItem('scout_hub_saved_views', JSON.stringify(updated));
+    setNewViewName('');
+    setShowSaveViewInput(false);
+  };
+
+  const handleDeleteView = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = savedViews.filter(v => v.id !== id);
+    setSavedViews(updated);
+    localStorage.setItem('scout_hub_saved_views', JSON.stringify(updated));
+  };
+
+  const handleApplyView = (view: SavedView) => {
+    setFilterPlatform(view.platform);
+    setFilterTier(view.tier);
+    setFilterCampaign(view.campaign);
+    setFilterWorkflowStatus(view.workflowStatus);
+    setFilterNiche(view.niche);
+    setFilterHasContact(view.hasContact);
+    setSearchTerm(view.searchTerm);
+    setFilterProjectName(view.projectName || 'all');
+  };
+
+  // Dynamic Fit Score Algorithm
+  const calculateFitScore = (profile: RestoredData) => {
+    let score = 20; // Base score for being scraped successfully
+    const positives: string[] = ['Đã trích xuất thành công (+20)'];
+    const negatives: string[] = [];
+
+    // 1. Contact availability (Max +30)
+    const hasPhone = profile.phone && profile.phone !== 'N/A' && profile.phone !== '-' && profile.phone !== '';
+    const hasEmail = profile.email && profile.email !== 'N/A' && profile.email !== '-' && profile.email !== '';
+    if (hasPhone) {
+      score += 15;
+      positives.push('Có số điện thoại (+15)');
+    } else {
+      negatives.push('Thiếu số điện thoại (-15)');
+    }
+    if (hasEmail) {
+      score += 15;
+      positives.push('Có địa chỉ Email (+15)');
+    } else {
+      negatives.push('Thiếu địa chỉ Email (-15)');
+    }
+
+    // 2. Engagement & Performance (Max +20)
+    if (profile.averageEngagement && profile.averageEngagement > 0) {
+      const engPercent = profile.averageEngagement;
+      if (engPercent >= 5) {
+        score += 20;
+        positives.push(`Tương tác cực cao: ${engPercent.toFixed(1)}% (+20)`);
+      } else if (engPercent >= 2.5) {
+        score += 10;
+        positives.push(`Tương tác tốt: ${engPercent.toFixed(1)}% (+10)`);
+      } else {
+        score -= 5;
+        negatives.push(`Tương tác thấp: ${engPercent.toFixed(1)}% (-5)`);
+      }
+    } else {
+      score -= 5;
+      negatives.push('Thiếu chỉ số tương tác (-5)');
+    }
+
+    // 3. Bio link & Bio (Max +20)
+    const hasBioLink = profile.bioLink && profile.bioLink !== 'N/A' && profile.bioLink !== '' && profile.bioLink !== '-';
+    if (hasBioLink) {
+      score += 10;
+      positives.push('Có link Bio liên kết (+10)');
+    } else {
+      negatives.push('Thiếu link Bio (-10)');
+    }
+    if (profile.bio && profile.bio.trim().length > 10) {
+      score += 10;
+      positives.push('Có Bio mô tả đầy đủ (+10)');
+    } else {
+      negatives.push('Bio trống/ngắn (-10)');
+    }
+
+    // 4. Niche & Categorization (Max +10)
+    if (profile.profileNiche && profile.profileNiche !== 'N/A' && profile.profileNiche !== 'Unclassified') {
+      score += 10;
+      positives.push(`Đã phân loại Niche: ${profile.profileNiche} (+10)`);
+    } else {
+      negatives.push('Chưa phân loại Niche (-10)');
+    }
+
+    // Clamp score between 0 and 100
+    score = Math.max(0, Math.min(100, score));
+
+    return { score, positives, negatives };
+  };
+
+  const renderFitScoreBadge = (row: RestoredData) => {
+    const { score, positives, negatives } = calculateFitScore(row);
+    let colorClass = '';
+    if (score >= 80) colorClass = isDark ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    else if (score >= 50) colorClass = isDark ? 'bg-amber-500/10 text-amber-300 border-amber-500/30' : 'bg-amber-50 text-amber-700 border-amber-200';
+    else colorClass = isDark ? 'bg-rose-500/10 text-rose-300 border-rose-500/30' : 'bg-rose-50 text-rose-700 border-rose-200';
+
+    const isOpen = scoreBreakdownProfileId === row.id;
+
+    return (
+      <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={() => setScoreBreakdownProfileId(isOpen ? null : row.id)}
+          className={`px-2 py-0.5 text-xs font-bold rounded-full border flex items-center gap-1 transition-all hover:scale-105 ${colorClass}`}
+          title="Xem phân tích độ phù hợp"
+        >
+          {score}%
+        </button>
+        
+        {isOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setScoreBreakdownProfileId(null)} />
+            <div className={`absolute right-0 mt-2 w-64 rounded-xl border shadow-2xl p-3.5 z-50 text-left font-normal ${
+              isDark ? 'bg-slate-800 border-white/10 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
+            }`}>
+              <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-slate-500/20">
+                <span className={`text-xs font-bold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Độ Phù Hợp Chiến Dịch</span>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${colorClass}`}>{score}%</span>
+              </div>
+              
+              <div className="space-y-2 mt-2 max-h-48 overflow-y-auto pr-1">
+                {positives.length > 0 && (
+                  <div>
+                    <div className="text-[9px] uppercase tracking-wider font-semibold text-emerald-500 mb-1">Điểm cộng</div>
+                    <ul className="space-y-0.5">
+                      {positives.map((p, i) => (
+                        <li key={i} className="text-[10px] flex items-start gap-1 leading-tight text-emerald-400">
+                          <span className="shrink-0 font-bold">✓</span> <span className={isDark ? 'text-slate-300' : 'text-slate-600'}>{p}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                
+                {negatives.length > 0 && (
+                  <div>
+                    <div className="text-[9px] uppercase tracking-wider font-semibold text-rose-500 mb-1">Điểm trừ</div>
+                    <ul className="space-y-0.5">
+                      {negatives.map((n, i) => (
+                        <li key={i} className="text-[10px] flex items-start gap-1 leading-tight text-rose-400">
+                          <span className="shrink-0 font-bold">✗</span> <span className={isDark ? 'text-slate-300' : 'text-slate-600'}>{n}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
 
   const isDark = theme === 'dark';
   const cardBg = isDark ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-white border-slate-200';
@@ -124,6 +319,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
   const dynamicLocations = useMemo(() => Array.from(new Set([...LOCATION_OPTIONS, ...data.flatMap(d => d.location)])), [data]);
   const dynamicGroups = useMemo(() => Array.from(new Set([...GROUP_OPTIONS, ...data.flatMap(d => d.group)])), [data]);
   const dynamicCampaigns = useMemo(() => Array.from(new Set([...CAMPAIGN_OPTIONS, ...data.flatMap(d => d.campaign)])), [data]);
+  const dynamicProjects = useMemo(() => Array.from(new Set(data.map(d => d.projectName).filter(Boolean))) as string[], [data]);
   const dynamicSow = useMemo(() => Array.from(new Set([...SOW_OPTIONS, ...data.flatMap(d => d.sow || [])])), [data]);
   const dynamicNiches = useMemo(() => Array.from(new Set(data.map(d => d.profileNiche).filter(Boolean))) as string[], [data]);
   const duplicateGroups = useMemo(() => findDuplicateGroups(data), [data]);
@@ -184,6 +380,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
           location: row['Vị trí'] ? String(row['Vị trí']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
           group: row['Nhóm'] ? String(row['Nhóm']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
           campaign: row['Campaign'] ? String(row['Campaign']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
+          projectName: row['Project Name'] || row.projectName || '',
           sow: row['SOW'] ? String(row['SOW']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
           notes: row.notes || [],
           rateHistory: row.rateHistory || [],
@@ -234,6 +431,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
           location: row['Vị trí'] ? String(row['Vị trí']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
           group: row['Nhóm'] || row['Nhóm Influencer'] ? String(row['Nhóm'] || row['Nhóm Influencer']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
           campaign: row['Campaign'] ? String(row['Campaign']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
+          projectName: row['Project Name'] || row['Project'] || '',
           sow: row['SOW'] ? String(row['SOW']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
           notes: [],
           rating: Number(row['Rating']) || 0,
@@ -284,12 +482,12 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
       'Vị trí': row.location.join(', '),
       'Nhóm': row.group.join(', '),
       'Campaign': row.campaign.join(', '),
+      'Project Name': row.projectName || '',
       'SOW': (row.sow || []).join(', '),
       'Ghi chú': (row.notes || []).map(n => n.text).join(' | '),
       'Rate History': (row.rateHistory || []).map(r => `${r.price.toLocaleString('vi-VN')}đ (${r.date}${r.note ? ' - ' + r.note : ''})`).join(' | '),
       'Rating': row.rating || 0,
       'Workflow': row.workflowStatus || 'New',
-      'Project Name': row.projectName || '',
       'Outreach Status': row.outreachStatus || 'Not Started',
       'Last Quoted At': row.lastQuotedAt || '',
       'Profile Niche': row.profileNiche || '',
@@ -416,9 +614,16 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
     return target instanceof Element && Boolean(target.closest('button, a, input, select, textarea, label, [role="button"]'));
   };
 
-  const handleProfileRowClick = (event: React.MouseEvent, id: string) => {
+  const handleCopy = (text: string, label: string) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    alert(`Đã copy ${label}: ${text}`);
+  };
+
+  const handleProfileRowClick = (event: React.MouseEvent, row: RestoredData) => {
     if (isInteractiveClick(event.target)) return;
-    toggleSelect(id);
+    setSelectedProfileIdForDrawer(row.id);
+    setDrawerDefaultTab('overview');
   };
 
   const selectAll = () => {
@@ -478,6 +683,71 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
     }
   };
 
+  const normalizeContactInfo = (row: RestoredData): RestoredData => {
+    let normalizedPhone = row.phone ? String(row.phone).trim() : '';
+    let normalizedEmail = row.email ? String(row.email).trim() : '';
+    let normalizedBioLink = row.bioLink ? String(row.bioLink).trim() : '';
+
+    // Phone Clean: Strip spaces, symbols, normalise +84/84 to national 0
+    if (normalizedPhone && normalizedPhone !== 'N/A' && normalizedPhone !== '-') {
+      let digits = normalizedPhone.replace(/[^\d+]/g, '');
+      if (digits.startsWith('0084')) {
+        digits = '0' + digits.slice(4);
+      } else if (digits.startsWith('+84')) {
+        digits = '0' + digits.slice(3);
+      } else if (digits.startsWith('84') && digits.length > 9) {
+        digits = '0' + digits.slice(2);
+      }
+      digits = digits.replace(/[^\d]/g, '');
+      if (digits.length >= 9 && digits.length <= 11) {
+        normalizedPhone = digits;
+      }
+    }
+
+    // Email Clean: Convert to lowercase, trim all white spaces
+    if (normalizedEmail && normalizedEmail !== 'N/A' && normalizedEmail !== '-') {
+      normalizedEmail = normalizedEmail.toLowerCase().replace(/\s+/g, '');
+    }
+
+    // Bio Link Clean: Strip tracking parameters (?fbclid=, etc.) and prepend https://
+    if (normalizedBioLink && normalizedBioLink !== 'N/A' && normalizedBioLink !== '-') {
+      try {
+        let cleanUrl = normalizedBioLink;
+        if (!/^https?:\/\//i.test(cleanUrl)) {
+          cleanUrl = 'https://' + cleanUrl;
+        }
+        const urlObj = new URL(cleanUrl);
+        const trackers = ['fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'igshid', '_r', 'utm_content', 'ttclid'];
+        trackers.forEach(t => urlObj.searchParams.delete(t));
+        normalizedBioLink = urlObj.toString();
+      } catch (e) {
+        normalizedBioLink = normalizedBioLink.split('?')[0];
+        if (!/^https?:\/\//i.test(normalizedBioLink)) {
+          normalizedBioLink = 'https://' + normalizedBioLink;
+        }
+      }
+    }
+
+    return {
+      ...row,
+      phone: normalizedPhone || row.phone,
+      email: normalizedEmail || row.email,
+      bioLink: normalizedBioLink || row.bioLink,
+      lastUpdated: new Date().toISOString(),
+    };
+  };
+
+  const bulkNormalizeContacts = () => {
+    if (selectedIds.size === 0) return;
+    const updatedData = data.map(r => selectedIds.has(r.id) ? normalizeContactInfo(r) : r);
+    onUpdateData(updatedData);
+    if (webhookUrl) {
+      const editedRows = updatedData.filter(r => selectedIds.has(r.id));
+      if (editedRows.length > 0) upsertToSheet(webhookUrl, editedRows);
+    }
+    alert(`Đã chuẩn hóa thành công thông tin liên hệ cho ${selectedIds.size} profile!`);
+  };
+
   const refreshProfiles = (profiles: RestoredData[]) => {
     const urls = profiles.map(profile => profile.url).filter(Boolean);
     if (urls.length === 0 || !onRefreshProfiles) return;
@@ -507,6 +777,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
     if (filterPlatform !== 'all') result = result.filter(r => r.platform === filterPlatform);
     if (filterTier !== 'all') result = result.filter(r => r.tier.includes(filterTier as Tier));
     if (filterCampaign !== 'all') result = result.filter(r => r.campaign.includes(filterCampaign));
+    if (filterProjectName !== 'all') result = result.filter(r => r.projectName === filterProjectName);
     if (filterWorkflowStatus !== 'all') result = result.filter(r => (r.workflowStatus || 'New') === filterWorkflowStatus);
     if (filterNiche !== 'all') result = result.filter(r => (r.profileNiche || 'Unclassified') === filterNiche);
     if (filterOutreachStatus !== 'all') result = result.filter(r => (r.outreachStatus || 'Not Started') === filterOutreachStatus);
@@ -527,7 +798,8 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
         ((r.workflowStatus || 'New').toLowerCase().includes(lower)) ||
         ((r.profileNiche || '').toLowerCase().includes(lower)) ||
         ((r.audienceHint || '').toLowerCase().includes(lower)) ||
-        ((r.notes || []).some(n => n.text.toLowerCase().includes(lower)))
+        ((r.notes || []).some(n => n.text.toLowerCase().includes(lower))) ||
+        (r.projectName?.toLowerCase().includes(lower))
       );
     }
     
@@ -544,7 +816,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
       return 0;
     });
     return result;
-  }, [data, searchTerm, sortField, sortOrder, filterPlatform, filterTier, filterCampaign, filterWorkflowStatus, filterNiche, filterOutreachStatus, filterHasContact, filterLifecycle, duplicateProfileIds]);
+  }, [data, searchTerm, sortField, sortOrder, filterPlatform, filterTier, filterCampaign, filterProjectName, filterWorkflowStatus, filterNiche, filterOutreachStatus, filterHasContact, filterLifecycle, duplicateProfileIds]);
 
   const formatFollowers = (val: string | number | undefined): string => {
     if (val === undefined || val === null || val === '' || val === 'N/A') return '';
@@ -596,7 +868,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
       )}
       {isChangedRecently(row) && (
         <button
-          onClick={() => setActiveChangeProfileId(row.id)}
+          onClick={() => { setSelectedProfileIdForDrawer(row.id); setDrawerDefaultTab('history'); }}
           className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium ${isDark ? 'bg-rose-500/15 text-rose-300 hover:bg-rose-500/25' : 'bg-rose-50 text-rose-700 hover:bg-rose-100'}`}
         >
           <History className="h-2.5 w-2.5" /> Changed
@@ -674,6 +946,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
     setFilterPlatform('all');
     setFilterTier('all');
     setFilterCampaign('all');
+    setFilterProjectName('all');
     setFilterHasContact('all');
     setFilterLifecycle('all');
     setFilterWorkflowStatus('all');
@@ -701,7 +974,6 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
     { label: 'Duplicate groups', value: duplicateGroups.length, icon: CopyX, color: isDark ? 'text-rose-300' : 'text-rose-600', bg: isDark ? 'bg-rose-900/20' : 'bg-rose-50', filter: 'duplicates' as const, active: filterLifecycle === 'duplicates' },
   ];
 
-  const activeChangeProfile = activeChangeProfileId ? data.find(row => row.id === activeChangeProfileId) : null;
 
   return (
     <div className="space-y-5">
@@ -724,70 +996,105 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
       </div>
 
       {/* Workflow Pipeline */}
-      <div className={`rounded-xl border p-4 ${cardBg}`}>
+      <div className={`rounded-xl border p-4 transition-all ${cardBg} ${isDark ? 'shadow-lg shadow-violet-500/[0.02]' : 'shadow-sm'}`}>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
           <div>
-            <h3 className={`text-sm font-semibold ${textP}`}>Workflow pipeline</h3>
-            <p className={`text-xs ${textM}`}>Theo dõi profile từ New đến Closed để team biết bước tiếp theo.</p>
+            <h3 className={`text-xs font-bold uppercase tracking-wider ${textP}`}>Workflow Pipeline Funnel</h3>
+            <p className={`text-[11px] ${textM} mt-0.5`}>Theo dõi và lọc danh sách profile từ giai đoạn New đến Closed.</p>
           </div>
           {filterWorkflowStatus !== 'all' && (
-            <button onClick={() => setFilterWorkflowStatus('all')} className={`text-xs ${isDark ? 'text-violet-300 hover:text-violet-200' : 'text-violet-600 hover:text-violet-500'}`}>
-              Xem tất cả
+            <button 
+              onClick={() => setFilterWorkflowStatus('all')} 
+              className={`text-xs font-semibold flex items-center gap-0.5 transition-colors ${
+                isDark ? 'text-violet-400 hover:text-violet-300' : 'text-violet-600 hover:text-violet-500'
+              }`}
+            >
+              <span>Xem tất cả pipeline</span>
             </button>
           )}
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
-          {WORKFLOW_STATUSES.map(status => (
-            <button
-              key={status}
-              onClick={() => setFilterWorkflowStatus(status)}
-              className={`rounded-xl border px-3 py-2 text-left transition-colors ${workflowColors[status]} ${filterWorkflowStatus === status ? 'ring-2 ring-violet-500/40' : ''}`}
-            >
-              <div className="text-xs font-semibold">{status}</div>
-              <div className="mt-1 text-xl font-bold">{workflowCounts[status]}</div>
-            </button>
-          ))}
+          {WORKFLOW_STATUSES.map(status => {
+            const isActive = filterWorkflowStatus === status;
+            return (
+              <button
+                key={status}
+                onClick={() => setFilterWorkflowStatus(isActive ? 'all' : status)}
+                className={`rounded-xl border px-3 py-2 text-left transition-all hover:scale-[1.02] hover:-translate-y-0.5 shadow-sm ${workflowColors[status]} ${
+                  isActive 
+                    ? 'ring-2 ring-violet-500/40 border-violet-500 font-extrabold shadow-md' 
+                    : 'border-transparent font-normal'
+                }`}
+              >
+                <div className="text-[10px] tracking-wide font-bold uppercase opacity-80">{status}</div>
+                <div className="mt-1 text-lg font-black leading-none">{workflowCounts[status]}</div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {duplicateGroups.length > 0 && (
-        <div className={`rounded-xl border p-4 ${cardBg}`}>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
-            <div>
-              <h3 className={`text-sm font-semibold ${textP}`}>Duplicate identity resolver</h3>
-              <p className={`text-xs ${textM}`}>Phát hiện trùng theo URL/handle/contact/bio link/tên. Gộp sẽ giữ profile nhiều CRM data nhất.</p>
+        <div className={`rounded-xl border p-4 transition-all ${
+          isDark 
+            ? 'bg-gradient-to-r from-amber-950/20 to-fuchsia-950/20 border-amber-500/20 shadow-lg shadow-amber-500/[0.01]' 
+            : 'bg-gradient-to-r from-amber-50 to-fuchsia-50 border-amber-200 shadow-sm'
+        }`}>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3.5">
+            <div className="flex items-start gap-2.5">
+              <div className={`p-1.5 rounded-lg shrink-0 ${isDark ? 'bg-amber-500/10 text-amber-400' : 'bg-amber-100 text-amber-700'}`}>
+                <CopyX className="h-4 w-4" />
+              </div>
+              <div>
+                <h3 className={`text-xs font-bold uppercase tracking-wider ${textP}`}>Duplicate Profile Resolver</h3>
+                <p className={`text-[11px] ${textM} mt-0.5`}>
+                  Phát hiện trùng lặp theo liên hệ/handle/URL. Gộp sẽ lưu giữ profile có nhiều dữ liệu nhất.
+                </p>
+              </div>
             </div>
             <button
               onClick={removeDuplicates}
-              className={`inline-flex items-center px-3 py-1.5 text-xs font-medium border rounded-lg transition-colors ${isDark ? 'border-amber-500/30 text-amber-300 hover:bg-amber-500/10' : 'border-amber-200 text-amber-700 hover:bg-amber-50'}`}
+              className={`inline-flex items-center px-3 py-1.5 text-xs font-bold border rounded-lg transition-all hover:scale-105 shrink-0 ${
+                isDark 
+                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 shadow-md shadow-amber-500/5' 
+                  : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 shadow-sm'
+              }`}
             >
-              <CopyX className="h-3.5 w-3.5 mr-1" />
-              Merge all ({duplicateGroups.length})
+              Gộp tất cả ({duplicateGroups.length})
             </button>
           </div>
-          <div className="space-y-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
             {duplicateGroups.slice(0, 3).map(group => (
-              <div key={group.id} className={`rounded-xl border px-3 py-2 ${isDark ? 'border-white/10 bg-white/[0.02]' : 'border-slate-200 bg-slate-50'}`}>
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                  <div>
-                    <div className={`text-xs font-semibold ${textP}`}>{group.reason}</div>
-                    <div className={`text-[11px] ${textM}`}>
-                      {group.profiles.map(profile => profile.nickname || profile.url).join(' · ')}
-                    </div>
+              <div 
+                key={group.id} 
+                className={`rounded-xl border px-3.5 py-2.5 flex items-center justify-between gap-3 transition-colors ${
+                  isDark ? 'border-white/[0.04] bg-black/20 hover:border-white/10' : 'border-slate-200 bg-white hover:border-slate-300'
+                }`}
+              >
+                <div className="min-w-0">
+                  <div className={`text-xs font-bold truncate ${textP}`}>{group.reason}</div>
+                  <div className={`text-[10px] ${textS} truncate mt-0.5`}>
+                    {group.profiles.map(profile => profile.nickname || profile.url).join(' · ')}
                   </div>
-                  <button
-                    onClick={() => mergeOneDuplicateGroup(group.profiles.map(profile => profile.id))}
-                    className={`text-xs font-medium ${isDark ? 'text-violet-300 hover:text-violet-200' : 'text-violet-600 hover:text-violet-500'}`}
-                  >
-                    Merge group
-                  </button>
                 </div>
+                <button
+                  onClick={() => mergeOneDuplicateGroup(group.profiles.map(profile => profile.id))}
+                  className={`text-[10px] font-bold px-2 py-1 rounded border transition-colors shrink-0 ${
+                    isDark 
+                      ? 'border-violet-500/20 text-violet-300 bg-violet-600/5 hover:bg-violet-600/15 hover:border-violet-500/40' 
+                      : 'border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100 hover:border-violet-300'
+                  }`}
+                >
+                  Gộp nhóm
+                </button>
               </div>
             ))}
-            {duplicateGroups.length > 3 && (
-              <p className={`text-[11px] ${textM}`}>Còn {duplicateGroups.length - 3} nhóm khác. Dùng Merge all để gộp toàn bộ.</p>
-            )}
           </div>
+          {duplicateGroups.length > 3 && (
+            <p className={`text-[10px] ${textM} mt-2.5 italic pl-1`}>
+              Còn {duplicateGroups.length - 3} nhóm trùng lặp khác. Nhấn "Gộp tất cả" để tự động xử lý toàn bộ.
+            </p>
+          )}
         </div>
       )}
 
@@ -813,31 +1120,76 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
               </div>
 
               {webhookUrl && (
-                <button onClick={refreshFromSheet} disabled={isRefreshing} className={`inline-flex items-center px-3 py-1.5 text-xs font-medium border rounded-lg transition-colors disabled:opacity-40 ${isDark ? 'border-white/10 text-blue-400 hover:bg-blue-500/10' : 'border-slate-200 text-blue-600 hover:bg-blue-50'}`}>
+                <button onClick={refreshFromSheet} disabled={isRefreshing} className={`inline-flex items-center px-3 py-1.5 text-xs font-semibold border rounded-lg transition-all disabled:opacity-40 hover:scale-105 ${isDark ? 'border-blue-500/20 bg-blue-600/10 text-blue-400 hover:bg-blue-600/20 shadow-lg shadow-blue-500/5' : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 shadow-sm shadow-blue-500/5'}`}>
                   {isRefreshing ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}
                   {isRefreshing ? 'Đang tải...' : 'Sync Sheet'}
                 </button>
               )}
 
-              {onRefreshProfiles && (
-                <button onClick={refreshWatchlist} disabled={!data.some(row => row.isWatchlisted)} className={`inline-flex items-center px-3 py-1.5 text-xs font-medium border rounded-lg transition-colors disabled:opacity-40 ${isDark ? 'border-white/10 text-violet-400 hover:bg-violet-500/10' : 'border-slate-200 text-violet-600 hover:bg-violet-50'}`}>
-                  <Bell className="h-3.5 w-3.5 mr-1" /> Refresh Watchlist
-                </button>
-              )}
+              <button 
+                onClick={() => setShowKPIDashboard(true)} 
+                disabled={data.length === 0} 
+                className={`inline-flex items-center px-3 py-1.5 text-xs font-semibold border rounded-lg transition-all disabled:opacity-40 hover:scale-105 ${
+                  isDark 
+                    ? 'border-violet-500/30 bg-violet-600/10 text-violet-400 hover:bg-violet-600/20 shadow-lg shadow-violet-500/5' 
+                    : 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 shadow-sm shadow-violet-500/5'
+                }`}
+              >
+                📊 Phân tích KPI
+              </button>
 
-              <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".xlsx,.xls,.csv" className="hidden" />
-              <button onClick={() => fileInputRef.current?.click()} className={`inline-flex items-center px-3 py-1.5 text-xs font-medium border rounded-lg transition-colors ${btnOutline}`}>
-                <Upload className="h-3.5 w-3.5 mr-1" /> Import
-              </button>
-              <button onClick={exportToExcel} disabled={data.length === 0} className={`inline-flex items-center px-3 py-1.5 text-xs font-medium border rounded-lg transition-colors disabled:opacity-40 ${isDark ? 'border-white/10 text-emerald-400 hover:bg-emerald-500/10' : 'border-slate-200 text-emerald-600 hover:bg-emerald-50'}`}>
-                <FileDown className="h-3.5 w-3.5 mr-1" /> Xuất Excel
-              </button>
-              <button onClick={removeDuplicates} disabled={data.length === 0} className={`inline-flex items-center px-3 py-1.5 text-xs font-medium border rounded-lg transition-colors disabled:opacity-40 ${isDark ? 'border-white/10 text-amber-400 hover:bg-amber-500/10' : 'border-slate-200 text-amber-600 hover:bg-amber-50'}`}>
-                <CopyX className="h-3.5 w-3.5 mr-1" /> Lọc trùng
-              </button>
-              <button onClick={clearAll} disabled={data.length === 0} className={`inline-flex items-center px-3 py-1.5 text-xs font-medium border rounded-lg transition-colors disabled:opacity-40 ${isDark ? 'border-white/10 text-red-400 hover:bg-red-500/10' : 'border-slate-200 text-red-500 hover:bg-red-50'}`}>
-                <Trash2 className="h-3.5 w-3.5 mr-1" /> Xóa hết
-              </button>
+              {/* CRM Tools Dropdown */}
+              <div className="relative">
+                <button 
+                  onClick={() => setShowCrmToolsDropdown(!showCrmToolsDropdown)}
+                  disabled={data.length === 0}
+                  className={`inline-flex items-center px-3 py-1.5 text-xs font-semibold border rounded-lg transition-all disabled:opacity-40 hover:scale-105 ${btnOutline}`}
+                >
+                  ⚡️ Công cụ ▾
+                </button>
+                {showCrmToolsDropdown && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setShowCrmToolsDropdown(false)} />
+                    <div className={`absolute right-0 mt-2 w-48 rounded-xl border shadow-2xl p-1 z-40 ${dropdownBg}`}>
+                      {onRefreshProfiles && (
+                        <button 
+                          onClick={() => { refreshWatchlist(); setShowCrmToolsDropdown(false); }} 
+                          disabled={!data.some(row => row.isWatchlisted)} 
+                          className={`w-full flex items-center px-3 py-2 text-xs text-left rounded-lg disabled:opacity-40 ${dropItemHover} ${isDark ? 'text-violet-300' : 'text-violet-700'}`}
+                        >
+                          <Bell className="h-3.5 w-3.5 mr-2" /> Refresh Watchlist
+                        </button>
+                      )}
+                      <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".xlsx,.xls,.csv" className="hidden" />
+                      <button 
+                        onClick={() => { fileInputRef.current?.click(); setShowCrmToolsDropdown(false); }} 
+                        className={`w-full flex items-center px-3 py-2 text-xs text-left rounded-lg ${dropItemHover} ${textP}`}
+                      >
+                        <Upload className="h-3.5 w-3.5 mr-2 text-slate-400" /> Import Excel/CSV
+                      </button>
+                      <button 
+                        onClick={() => { exportToExcel(); setShowCrmToolsDropdown(false); }} 
+                        className={`w-full flex items-center px-3 py-2 text-xs text-left rounded-lg ${dropItemHover} ${textP}`}
+                      >
+                        <FileDown className="h-3.5 w-3.5 mr-2 text-emerald-400" /> Xuất file Excel
+                      </button>
+                      <button 
+                        onClick={() => { removeDuplicates(); setShowCrmToolsDropdown(false); }} 
+                        className={`w-full flex items-center px-3 py-2 text-xs text-left rounded-lg ${dropItemHover} ${textP}`}
+                      >
+                        <CopyX className="h-3.5 w-3.5 mr-2 text-amber-400" /> Gộp trùng lặp
+                      </button>
+                      <div className={`border-t ${borderC} my-1`} />
+                      <button 
+                        onClick={() => { clearAll(); setShowCrmToolsDropdown(false); }} 
+                        className={`w-full flex items-center px-3 py-2 text-xs text-left rounded-lg text-red-500 ${dropItemHover}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 mr-2" /> Xóa tất cả CRM
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
@@ -848,6 +1200,81 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
               <input type="text" placeholder="Tìm kiếm..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
                 className={`pl-8 pr-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-violet-500/50 w-48 ${inputBg}`} />
             </div>
+            {/* Saved Views Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowSavedViewsDropdown(!showSavedViewsDropdown)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border rounded-lg transition-colors ${btnOutline}`}
+              >
+                📁 Bộ lọc đã lưu ({savedViews.length}) <ChevronDown className="h-3 w-3" />
+              </button>
+              
+              {showSavedViewsDropdown && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setShowSavedViewsDropdown(false)} />
+                  <div className={`absolute left-0 mt-2 w-64 rounded-xl border shadow-2xl p-2 z-40 ${dropdownBg}`}>
+                    <div className={`text-[10px] uppercase font-bold px-3 py-1.5 tracking-wider border-b ${borderC} ${textS}`}>Danh sách bộ lọc</div>
+                    {savedViews.length === 0 ? (
+                      <div className={`text-xs px-3 py-4 text-center ${textM}`}>Chưa có bộ lọc nào được lưu.</div>
+                    ) : (
+                      <div className="max-h-48 overflow-y-auto py-1">
+                        {savedViews.map(view => (
+                          <div
+                            key={view.id}
+                            onClick={() => { handleApplyView(view); setShowSavedViewsDropdown(false); }}
+                            className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs cursor-pointer ${dropItemHover} ${textP}`}
+                          >
+                            <span className="font-medium truncate">{view.name}</span>
+                            <button
+                              onClick={(e) => handleDeleteView(view.id, e)}
+                              className={`p-1 rounded text-slate-500 hover:text-red-400 ${isDark ? 'hover:bg-white/5' : 'hover:bg-slate-100'}`}
+                              title="Xóa bộ lọc"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Save Current View Controls */}
+            {showSaveViewInput ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  placeholder="Tên bộ lọc..."
+                  value={newViewName}
+                  onChange={(e) => setNewViewName(e.target.value)}
+                  className={`px-2.5 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-violet-500/50 w-36 ${inputBg}`}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSaveCurrentView()}
+                />
+                <button
+                  onClick={handleSaveCurrentView}
+                  className="px-3 py-1.5 text-xs font-semibold bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors shrink-0"
+                >
+                  Lưu
+                </button>
+                <button
+                  onClick={() => { setShowSaveViewInput(false); setNewViewName(''); }}
+                  className={`p-1.5 rounded-lg border shrink-0 ${btnOutline}`}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowSaveViewInput(true)}
+                className={`inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold border rounded-lg transition-colors ${btnOutline}`}
+                title="Lưu bộ lọc hiện tại"
+              >
+                <Filter className="h-3.5 w-3.5" /> Lưu bộ lọc
+              </button>
+            )}
+
             <select value={filterPlatform} onChange={(e) => setFilterPlatform(e.target.value)}
               className={`px-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-violet-500/50 cursor-pointer ${inputBg}`}>
               <option value="all">Tất cả Platform</option>
@@ -863,6 +1290,11 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
               className={`px-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-violet-500/50 cursor-pointer ${inputBg}`}>
               <option value="all">Tất cả Campaign</option>
               {dynamicCampaigns.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <select value={filterProjectName} onChange={(e) => setFilterProjectName(e.target.value)}
+              className={`px-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-violet-500/50 cursor-pointer ${inputBg}`}>
+              <option value="all">Tất cả Dự án</option>
+              {dynamicProjects.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
             <select value={filterWorkflowStatus} onChange={(e) => setFilterWorkflowStatus(e.target.value)}
               className={`px-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-violet-500/50 cursor-pointer ${inputBg}`}>
@@ -906,6 +1338,35 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
                 {selectedIds.size >= 2 && selectedIds.size <= 5 && (
                   <button onClick={() => setShowCompareModal(true)} className={`text-xs ${isDark ? 'text-violet-400 hover:text-violet-300' : 'text-violet-600 hover:text-violet-500'}`}>So sánh</button>
                 )}
+
+                {/* Prominent Quick-Access AI Tools */}
+                <button 
+                  onClick={() => {
+                    setOutreachTargets(data.filter(p => selectedIds.has(p.id)));
+                    setShowOutreachComposer(true);
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg border shadow-sm transition-all hover:scale-105 ${
+                    isDark 
+                      ? 'border-fuchsia-500/20 bg-fuchsia-500/10 text-fuchsia-300 hover:bg-fuchsia-500/20 shadow-fuchsia-500/5' 
+                      : 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700 hover:bg-fuchsia-100 shadow-fuchsia-500/5'
+                  }`}
+                >
+                  <Send className="h-3 w-3" /> Soạn Outreach
+                </button>
+                <button 
+                  onClick={() => {
+                    setQuotationTarget(null);
+                    setShowQuotationParser(true);
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg border shadow-sm transition-all hover:scale-105 ${
+                    isDark 
+                      ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 shadow-emerald-500/5' 
+                      : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 shadow-emerald-500/5'
+                  }`}
+                >
+                  <MessageSquare className="h-3 w-3" /> Parse báo giá
+                </button>
+
                 <div className="relative">
                   <button onClick={() => setShowBulkActions(!showBulkActions)} className={`text-xs ${isDark ? 'text-violet-400 hover:text-violet-300' : 'text-violet-600 hover:text-violet-500'}`}>Thao tác ▾</button>
                   {showBulkActions && (
@@ -935,6 +1396,12 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
                         </div>
                         <div className={`border-l ${borderC} pl-2`}>
                           <div className={`text-[10px] font-medium px-3 py-1 ${textS}`}>Actions</div>
+                          <button onClick={() => {
+                            bulkNormalizeContacts();
+                            setShowBulkActions(false);
+                          }} className={`w-full text-left px-3 py-1 text-xs ${dropItemHover} ${isDark ? 'text-blue-300' : 'text-blue-600'}`}>
+                            🧹 Chuẩn hóa liên hệ
+                          </button>
                           <button onClick={() => {
                             setOutreachTargets(data.filter(p => selectedIds.has(p.id)));
                             setShowOutreachComposer(true);
@@ -987,13 +1454,23 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <div className={`font-medium text-sm truncate ${textP}`}>{row.nickname || 'N/A'}</div>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <div className={`font-medium text-sm truncate ${textP}`}>{row.nickname || 'N/A'}</div>
+                      {row.projectName && (
+                        <span className={`inline-flex items-center gap-0.5 px-1 py-0.2 rounded text-[8px] font-bold tracking-wider uppercase shrink-0 ${isDark ? 'bg-violet-500/25 text-violet-300 border border-violet-500/30' : 'bg-violet-50 text-violet-700 border border-violet-200'}`} title={`Dự án: ${row.projectName}`}>
+                          💼 {row.projectName}
+                        </span>
+                      )}
+                    </div>
                     <div className={`text-[11px] ${textS} truncate`}>{row.channelId ? `@${row.channelId}` : '-'}</div>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium ${row.platform === 'Facebook' ? tagColors.blue : (isDark ? 'bg-slate-700/50 text-slate-300' : 'bg-slate-100 text-slate-600')}`}>
-                        {row.platform || 'TikTok'}
-                      </span>
-                      {row.followers && <span className={`text-[11px] ${textP} font-medium`}>{formatFollowers(row.followers)}</span>}
+                    <div className="flex items-center justify-between gap-2 mt-1 w-full">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium ${row.platform === 'Facebook' ? tagColors.blue : (isDark ? 'bg-slate-700/50 text-slate-300' : 'bg-slate-100 text-slate-600')}`}>
+                          {row.platform || 'TikTok'}
+                        </span>
+                        {row.followers && <span className={`text-[11px] ${textP} font-medium`}>{formatFollowers(row.followers)}</span>}
+                      </div>
+                      {renderFitScoreBadge(row)}
                     </div>
                     <div className="mt-1">
                       <ProfileSignals row={row} />
@@ -1033,11 +1510,11 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
                   <a href={row.url} target="_blank" rel="noreferrer" className={`text-[10px] flex items-center gap-1 ${isDark ? 'text-violet-400 hover:text-violet-300' : 'text-violet-600 hover:text-violet-500'}`}>
                     <LinkIcon className="h-3 w-3" /> Profile
                   </a>
-                  <button onClick={() => setActiveRateProfileId(row.id)} className={`text-[10px] flex items-center gap-1 ${isDark ? 'text-amber-400 hover:text-amber-300' : 'text-amber-600 hover:text-amber-500'}`}>
+                  <button onClick={() => { setSelectedProfileIdForDrawer(row.id); setDrawerDefaultTab('notes_rates'); }} className={`text-[10px] flex items-center gap-1 ${isDark ? 'text-amber-400 hover:text-amber-300' : 'text-amber-600 hover:text-amber-500'}`}>
                     <History className="h-3 w-3" /> Báo giá {row.rateHistory?.length ? `(${row.rateHistory.length})` : ''}
                   </button>
                   {row.changeHistory && row.changeHistory.length > 0 && (
-                    <button onClick={() => setActiveChangeProfileId(row.id)} className={`text-[10px] flex items-center gap-1 ${isDark ? 'text-rose-400 hover:text-rose-300' : 'text-rose-600 hover:text-rose-500'}`}>
+                    <button onClick={() => { setSelectedProfileIdForDrawer(row.id); setDrawerDefaultTab('history'); }} className={`text-[10px] flex items-center gap-1 ${isDark ? 'text-rose-400 hover:text-rose-300' : 'text-rose-600 hover:text-rose-500'}`}>
                       <Eye className="h-3 w-3" /> Changes
                     </button>
                   )}
@@ -1066,33 +1543,28 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
                     <div className="flex items-center justify-end">Followers <SortIcon field="followers" /></div>
                   </th>
                   <th className="px-3 py-3 font-medium w-24 text-right">Avg View</th>
-                  <th className="px-3 py-3 font-medium w-28 text-right">Avg Engage</th>
-                  <th className="px-3 py-3 font-medium w-28">SĐT</th>
-                  <th className="px-3 py-3 font-medium w-40">Email</th>
-                  <th className="px-3 py-3 font-medium w-28">Link Bio</th>
-                  <th className="px-3 py-3 font-medium min-w-[130px]">Workflow</th>
-                  <th className="px-3 py-3 font-medium min-w-[150px]">Classification</th>
-                  <th className="px-3 py-3 font-medium w-20 text-center cursor-pointer" onClick={() => handleSort('rating')}>
+                  <th className="px-3 py-3 font-medium w-24 text-right">Avg Engage</th>
+                  <th className="px-3 py-3 font-medium w-24 text-center">Độ phù hợp</th>
+                  <th className="px-3 py-3 font-medium w-24 text-center">Liên hệ</th>
+                  <th className="px-3 py-3 font-medium min-w-[110px]">Workflow</th>
+                  <th className="px-3 py-3 font-medium min-w-[120px]">Chủ đề (Niche)</th>
+                  <th className="px-3 py-3 font-medium w-16 text-center cursor-pointer" onClick={() => handleSort('rating')}>
                     <div className="flex items-center justify-center">Rating <SortIcon field="rating" /></div>
                   </th>
-                  <th className="px-3 py-3 font-medium min-w-[130px]">Tier</th>
-                  <th className="px-3 py-3 font-medium min-w-[100px]">Vị trí</th>
-                  <th className="px-3 py-3 font-medium min-w-[120px]">Nhóm</th>
-                  <th className="px-3 py-3 font-medium min-w-[130px]">Campaign</th>
-                  <th className="px-3 py-3 font-medium min-w-[130px]">SOW</th>
-                  <th className="px-3 py-3 font-medium min-w-[200px]">Ghi chú</th>
-                  <th className="px-3 py-3 font-medium w-12 text-center">Xóa</th>
+                  <th className="px-3 py-3 font-medium min-w-[150px]">Thẻ CRM (Tags)</th>
+                  <th className="px-3 py-3 font-medium w-16 text-center">Note</th>
+                  <th className="px-3 py-3 font-medium w-28 text-center">Hành động</th>
                 </tr>
               </thead>
               <tbody className={`divide-y ${divideC}`}>
                 {filteredAndSortedData.length === 0 ? (
-                  <tr><td colSpan={21} className={`px-4 py-12 text-center ${textM}`}>
+                  <tr><td colSpan={16} className={`px-4 py-12 text-center ${textM}`}>
                     <Users className="h-8 w-8 mx-auto mb-2 opacity-30" /><p>Chưa có dữ liệu lưu trữ.</p>
                   </td></tr>
                 ) : filteredAndSortedData.map((row, index) => (
                   <tr
                     key={row.id}
-                    onClick={(event) => handleProfileRowClick(event, row.id)}
+                    onClick={(event) => handleProfileRowClick(event, row)}
                     className={`${rowHover} ${selectedIds.has(row.id) ? (isDark ? 'bg-violet-500/10' : 'bg-violet-50') : ''} cursor-pointer transition-colors`}
                   >
                     <td className="px-3 py-3 text-center">
@@ -1106,133 +1578,126 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
                       </span>
                     </td>
                     <td className="px-3 py-3">
-                      <div className={`font-medium ${textP} truncate max-w-[11rem]`}>{row.nickname || '-'}</div>
-                      <div className={`text-[11px] ${textM} truncate max-w-[11rem]`}>{row.channelId ? `@${row.channelId}` : '-'}</div>
+                      <div className="flex items-center gap-2">
+                        {row.profilePic && (
+                          <img src={row.profilePic} alt="" className="w-6 h-6 rounded-full object-cover border border-slate-700 shrink-0" referrerPolicy="no-referrer" />
+                        )}
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <div className={`font-semibold text-xs truncate max-w-[11rem] ${textP}`}>{row.nickname || '-'}</div>
+                            {row.projectName && (
+                              <span className={`inline-flex items-center gap-0.5 px-1 py-0.2 rounded text-[8px] font-bold tracking-wider uppercase shrink-0 ${isDark ? 'bg-violet-500/25 text-violet-300 border border-violet-500/30' : 'bg-violet-50 text-violet-700 border border-violet-200'}`} title={`Dự án: ${row.projectName}`}>
+                                💼 {row.projectName}
+                              </span>
+                            )}
+                          </div>
+                          <div className={`text-[10px] ${textM} truncate max-w-[11rem]`}>{row.channelId ? `@${row.channelId}` : '-'}</div>
+                        </div>
+                      </div>
                       <div className="mt-1">
                         <ProfileSignals row={row} />
                       </div>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <a href={row.url} target="_blank" rel="noreferrer" className={`text-[10px] flex items-center gap-1 ${isDark ? 'text-violet-400 hover:text-violet-300' : 'text-violet-600 hover:text-violet-500'}`}>
-                          <LinkIcon className="h-2.5 w-2.5 shrink-0" /> Link
-                        </a>
-                        <button onClick={() => setActiveRateProfileId(row.id)} className={`text-[10px] flex items-center gap-1 ${isDark ? 'text-amber-400 hover:text-amber-300' : 'text-amber-600 hover:text-amber-500'}`}>
-                          <History className="h-2.5 w-2.5" /> Thêm giá {row.rateHistory?.length ? `(${row.rateHistory.length})` : ''}
-                        </button>
-                        {row.changeHistory && row.changeHistory.length > 0 && (
-                          <button onClick={() => setActiveChangeProfileId(row.id)} className={`text-[10px] flex items-center gap-1 ${isDark ? 'text-rose-400 hover:text-rose-300' : 'text-rose-600 hover:text-rose-500'}`}>
-                            <Eye className="h-2.5 w-2.5" /> Changes
-                          </button>
-                        )}
-                      </div>
                     </td>
-                    <td className={`px-3 py-3 text-right font-medium ${textP}`}>{formatFollowers(row.followers) || '-'}</td>
+                    <td className={`px-3 py-3 text-right text-xs font-semibold ${textP}`}>{formatFollowers(row.followers) || '-'}</td>
                     <td className={`px-3 py-3 text-right text-xs font-medium ${isDark ? 'text-cyan-400' : 'text-cyan-600'}`}>
                       {row.platform === 'TikTok' && row.averageView ? formatNum(row.averageView) : '-'}
                     </td>
-                    <td className={`px-3 py-3 text-right text-xs font-medium ${isDark ? 'text-amber-400' : 'text-amber-600'}`} title={row.platform === 'TikTok' && row.averageEngagement ? '❤️ Likes + 💬 Comments + 🔄 Shares + 🔖 Saves' : ''}>
-                      {row.platform === 'TikTok' && row.averageEngagement ? formatNum(row.averageEngagement) : '-'}
-                    </td>
-                    <td className={`px-3 py-3 font-medium text-xs ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{row.phone && row.phone !== 'N/A' ? row.phone : '-'}</td>
-                    <td className={`px-3 py-3 ${textS} text-xs truncate max-w-[10rem]`}>{row.email && row.email !== 'N/A' ? row.email : '-'}</td>
-                    <td className={`px-3 py-3 ${textS} text-xs`}>
-                      {row.bioLink && row.bioLink !== 'N/A' ? (
-                        <a href={row.bioLink.startsWith('http') ? row.bioLink : `https://${row.bioLink}`} target="_blank" rel="noreferrer"
-                          className={`flex items-center gap-1 ${isDark ? 'hover:text-violet-400' : 'hover:text-violet-600'} transition-colors`}>
-                          <LinkIcon className="h-3 w-3 shrink-0" /> Link
-                        </a>
-                      ) : '-'}
-                    </td>
-                    <td className="px-3 py-3">
-                      <select
-                        value={row.workflowStatus || 'New'}
-                        onChange={(e) => updateWorkflowStatus(row, e.target.value as WorkflowStatus)}
-                        className={`min-w-[120px] px-2 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-violet-500/50 ${inputBg}`}
-                      >
-                        {WORKFLOW_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
-                      </select>
-                    </td>
-                    <td className={`px-3 py-3 text-xs ${textS}`}>
-                      <div className={`font-medium ${textP}`}>{row.profileNiche || 'Unclassified'}</div>
-                      <div className="truncate max-w-[10rem]" title={row.audienceHint}>{row.audienceHint || 'Needs manual review'}</div>
-                      <div className={`text-[10px] ${textM}`}>{Math.round((row.classificationConfidence || 0) * 100)}% confidence</div>
+                    <td className={`px-3 py-3 text-right text-xs font-medium ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>
+                      {row.platform === 'TikTok' && row.averageEngagement ? row.averageEngagement.toFixed(1) + '%' : '-'}
                     </td>
                     <td className="px-3 py-3 text-center">
-                      <StarRating value={row.rating || 0} onChange={(v) => updateRow(row.id, 'rating', v)} />
+                      {renderFitScoreBadge(row)}
                     </td>
-                    <td className={`px-3 py-3 font-medium text-xs ${textP}`}>
-                      <div className="w-full min-w-[120px]">
-                        <TagSelector options={dynamicTiers} value={row.tier} onChange={(val) => updateRow(row.id, 'tier', val as Tier[])} color="violet" />
-                      </div>
-                    </td>
-                    <td className={`px-3 py-3 text-xs ${textS}`}>
-                      <div className="w-full min-w-[100px]">
-                        <TagSelector options={dynamicLocations} value={row.location} onChange={(val) => updateRow(row.id, 'location', val)} color="emerald" />
-                      </div>
-                    </td>
-                    <td className={`px-3 py-3 text-xs ${textS}`}>
-                      <div className="w-full min-w-[120px]">
-                        <TagSelector options={dynamicGroups} value={row.group} onChange={(val) => updateRow(row.id, 'group', val)} color="blue" />
-                      </div>
-                    </td>
-                    <td className={`px-3 py-3 text-xs ${textS}`}>
-                      <div className="w-full min-w-[140px]">
-                        <TagSelector options={dynamicCampaigns} value={row.campaign} onChange={(val) => updateRow(row.id, 'campaign', val)} color="violet" />
-                      </div>
-                    </td>
-                    <td className={`px-3 py-3 text-xs ${textS}`}>
-                      <div className="w-full min-w-[130px]">
-                        <TagSelector options={dynamicSow} value={row.sow || []} onChange={(val) => updateRow(row.id, 'sow', val)} color="emerald" />
+                    <td className="px-3 py-3 text-center">
+                      <div className="flex items-center justify-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                        {row.phone && row.phone !== 'N/A' && row.phone !== '-' ? (
+                          <button
+                            onClick={() => handleCopy(row.phone || '', 'SĐT')}
+                            className={`p-1 rounded-md border ${isDark ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20' : 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'}`}
+                            title={`Copy SĐT: ${row.phone}`}
+                          >
+                            <Phone className="h-3 w-3" />
+                          </button>
+                        ) : '-'}
+                        {row.email && row.email !== 'N/A' && row.email !== '-' ? (
+                          <button
+                            onClick={() => handleCopy(row.email || '', 'Email')}
+                            className={`p-1 rounded-md border ${isDark ? 'bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20' : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'}`}
+                            title={`Copy Email: ${row.email}`}
+                          >
+                            <Mail className="h-3 w-3" />
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                     <td className="px-3 py-3">
-                      <div className="space-y-1">
-                        {(row.notes || []).map(note => (
-                          <div key={note.id} className="flex items-start gap-1 group/note">
-                            <span className={`text-[10px] ${textS} flex-1`}>{note.text}</span>
-                            <button onClick={() => deleteNote(row.id, note.id)} className={`opacity-0 group-hover/note:opacity-100 ${isDark ? 'text-slate-600 hover:text-red-400' : 'text-slate-300 hover:text-red-500'} transition-all shrink-0`}>
-                              <X className="h-2.5 w-2.5" />
-                            </button>
-                          </div>
-                        ))}
-                        {editingNoteId === row.id ? (
-                          <div className="flex flex-col gap-1">
-                            <div className="flex gap-1 flex-wrap mb-1.5">
-                              {NOTE_TEMPLATES.map(tmpl => (
-                                <button key={tmpl} onClick={() => addNote(row.id, tmpl)} className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${isDark ? 'border-white/10 text-slate-300 hover:bg-violet-500/20 hover:text-violet-300 hover:border-violet-500/30' : 'border-slate-200 text-slate-600 hover:bg-violet-50 hover:text-violet-600 hover:border-violet-200'}`}>
-                                  {tmpl}
-                                </button>
-                              ))}
-                            </div>
-                            <div className="flex gap-1">
-                              <input type="text" value={noteText} onChange={(e) => setNoteText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addNote(row.id)}
-                                placeholder="Ghi chú..." className={`flex-1 px-2 py-0.5 text-[10px] rounded border focus:outline-none focus:ring-1 focus:ring-violet-500/50 ${inputBg}`} autoFocus />
-                              <button onClick={() => addNote(row.id)} className={`${isDark ? 'text-violet-400 hover:text-violet-300' : 'text-violet-600 hover:text-violet-500'}`}>
-                                <CheckCircle2 className="h-3 w-3" />
-                              </button>
-                              <button onClick={() => { setEditingNoteId(null); setNoteText(''); }} className={`${isDark ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-600'}`}>
-                                <X className="h-3 w-3" />
-                              </button>
-                            </div>
-                          </div>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${workflowColors[row.workflowStatus || 'New']}`}>
+                        {row.workflowStatus || 'New'}
+                      </span>
+                    </td>
+                    <td className={`px-3 py-3 text-xs ${textS}`}>
+                      <div className={`font-semibold ${textP} text-xs truncate max-w-[8rem]`}>{row.profileNiche || 'Unclassified'}</div>
+                      {row.audienceHint && (
+                        <div className="text-[10px] truncate max-w-[8rem]" title={row.audienceHint}>{row.audienceHint}</div>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      <div className="inline-flex items-center gap-0.5 text-xs font-bold text-amber-400">
+                        {row.rating > 0 ? (
+                          <>
+                            <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
+                            <span>{row.rating}</span>
+                          </>
                         ) : (
-                          <button onClick={() => setEditingNoteId(row.id)} className={`text-[10px] ${textM} hover:${isDark ? 'text-violet-400' : 'text-violet-600'} flex items-center gap-1 transition-colors`}>
-                            <StickyNote className="h-2.5 w-2.5" /> Thêm ghi chú
-                          </button>
+                          <span className={textM}>-</span>
                         )}
                       </div>
                     </td>
+                    <td className="px-3 py-3">
+                      <div className="flex flex-wrap gap-1 max-w-[180px]">
+                        {row.tier.map(t => (
+                          <span key={t} className={`px-1.5 py-0.5 rounded text-[9px] font-semibold ${tagColors.violet}`}>{t}</span>
+                        ))}
+                        {row.location.map(l => (
+                          <span key={l} className={`px-1.5 py-0.5 rounded text-[9px] font-semibold ${tagColors.emerald}`}>{l}</span>
+                        ))}
+                        {row.group.map(g => (
+                          <span key={g} className={`px-1.5 py-0.5 rounded text-[9px] font-semibold ${tagColors.blue}`}>{g}</span>
+                        ))}
+                        {(row.sow || []).map(s => (
+                          <span key={s} className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-pink-900/20 text-pink-300 border border-pink-500/10">{s}</span>
+                        ))}
+                        {row.campaign.map(c => (
+                          <span key={c} className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-violet-900/20 text-violet-300 border border-violet-500/10">{c}</span>
+                        ))}
+                      </div>
+                    </td>
                     <td className="px-3 py-3 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <button onClick={() => { setOutreachTargets([row]); setShowOutreachComposer(true); }} className={`${isDark ? 'text-slate-600 hover:text-fuchsia-400' : 'text-slate-300 hover:text-fuchsia-500'} transition-colors`} title="Soạn Outreach">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setSelectedProfileIdForDrawer(row.id); setDrawerDefaultTab('notes_rates'); }}
+                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs transition-colors ${
+                          row.notes?.length 
+                            ? isDark ? 'text-violet-400 bg-violet-500/10 hover:bg-violet-500/20' : 'text-violet-700 bg-violet-50 hover:bg-violet-100 font-bold'
+                            : textM
+                        }`}
+                        title={row.notes?.length ? `Xem ${row.notes.length} ghi chú` : 'Thêm ghi chú'}
+                      >
+                        <StickyNote className="h-3.5 w-3.5" />
+                        {row.notes?.length > 0 && <span>{row.notes.length}</span>}
+                      </button>
+                    </td>
+                    <td className="px-3 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-center gap-1.5">
+                        <button onClick={() => { setOutreachTargets([row]); setShowOutreachComposer(true); }} className={`p-1 rounded transition-colors ${isDark ? 'text-slate-400 hover:text-fuchsia-400 hover:bg-white/5' : 'text-slate-400 hover:text-fuchsia-600 hover:bg-slate-100'}`} title="Soạn Outreach">
                           <Send className="h-3.5 w-3.5" />
                         </button>
-                        <button onClick={() => { setQuotationTarget(row); setShowQuotationParser(true); }} className={`${isDark ? 'text-slate-600 hover:text-emerald-400' : 'text-slate-300 hover:text-emerald-500'} transition-colors`} title="Parse báo giá">
+                        <button onClick={() => { setQuotationTarget(row); setShowQuotationParser(true); }} className={`p-1 rounded transition-colors ${isDark ? 'text-slate-400 hover:text-emerald-400 hover:bg-white/5' : 'text-slate-400 hover:text-emerald-600 hover:bg-slate-100'}`} title="Parse báo giá">
                           <MessageSquare className="h-3.5 w-3.5" />
                         </button>
-                        <button onClick={() => toggleWatchlist(row)} className={`${row.isWatchlisted ? (isDark ? 'text-violet-300 hover:text-violet-200' : 'text-violet-600 hover:text-violet-500') : (isDark ? 'text-slate-600 hover:text-violet-300' : 'text-slate-300 hover:text-violet-500')} transition-colors`} title={row.isWatchlisted ? 'Bỏ Watchlist' : 'Thêm Watchlist'}>
+                        <button onClick={() => toggleWatchlist(row)} className={`p-1 rounded transition-colors ${row.isWatchlisted ? (isDark ? 'text-violet-400 hover:text-violet-300' : 'text-violet-600 hover:text-violet-500') : (isDark ? 'text-slate-400 hover:text-violet-400 hover:bg-white/5' : 'text-slate-400 hover:text-violet-600 hover:bg-slate-100')}`} title={row.isWatchlisted ? 'Bỏ Watchlist' : 'Thêm Watchlist'}>
                           {row.isWatchlisted ? <BellOff className="h-3.5 w-3.5" /> : <Bell className="h-3.5 w-3.5" />}
                         </button>
-                        <button onClick={() => deleteRow(row.id)} className={`${isDark ? 'text-slate-600 hover:text-red-400' : 'text-slate-300 hover:text-red-500'} transition-colors`}>
+                        <button onClick={() => deleteRow(row.id)} className={`p-1 rounded transition-colors ${isDark ? 'text-slate-400 hover:text-red-400 hover:bg-white/5' : 'text-slate-400 hover:text-red-600 hover:bg-slate-100'}`} title="Xóa">
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
                       </div>
@@ -1252,56 +1717,29 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
         theme={theme} 
       />
 
-      {activeChangeProfile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
-          <div className={`${isDark ? 'bg-black/60' : 'bg-slate-900/40'} absolute inset-0 backdrop-blur-sm`} onClick={() => setActiveChangeProfileId(null)} />
-          <div className={`relative w-full max-w-3xl max-h-[85vh] rounded-2xl border shadow-2xl overflow-hidden ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-            <div className={`px-5 py-4 border-b ${borderC} flex items-center justify-between`}>
-              <div>
-                <h3 className={`text-base font-semibold ${textP}`}>Change history</h3>
-                <p className={`text-xs ${textM}`}>{activeChangeProfile.nickname || activeChangeProfile.url}</p>
-              </div>
-              <button onClick={() => setActiveChangeProfileId(null)} className={`p-2 rounded-xl transition-colors ${isDark ? 'text-slate-400 hover:text-white hover:bg-white/10' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'}`}>
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="p-5 overflow-y-auto max-h-[70vh] space-y-4">
-              {!activeChangeProfile.changeHistory || activeChangeProfile.changeHistory.length === 0 ? (
-                <p className={`text-sm ${textM}`}>Chưa có thay đổi nào được ghi nhận.</p>
-              ) : activeChangeProfile.changeHistory.map(record => (
-                <div key={record.id} className={`rounded-xl border p-4 ${isDark ? 'border-white/10 bg-white/[0.03]' : 'border-slate-200 bg-slate-50'}`}>
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 mb-3">
-                    <div className={`text-sm font-medium ${textP}`}>
-                      {new Date(record.detectedAt).toLocaleString('vi-VN')}
-                    </div>
-                    <span className={`text-[10px] uppercase tracking-wide ${isDark ? 'text-rose-300' : 'text-rose-600'}`}>{record.source}</span>
-                  </div>
-                  <div className="space-y-2">
-                    {record.changes.map(change => (
-                      <div key={`${record.id}-${change.field}`} className={`grid grid-cols-1 md:grid-cols-[120px_1fr_1fr] gap-2 text-xs ${textS}`}>
-                        <div className={`font-medium ${textP}`}>{change.label}</div>
-                        <div className={`rounded-lg px-2 py-1 ${isDark ? 'bg-red-500/10 text-red-200' : 'bg-red-50 text-red-700'}`}>
-                          Cũ: {change.oldValue ?? '-'}
-                        </div>
-                        <div className={`rounded-lg px-2 py-1 ${isDark ? 'bg-emerald-500/10 text-emerald-200' : 'bg-emerald-50 text-emerald-700'}`}>
-                          Mới: {change.newValue ?? '-'}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      <RateHistoryModal
-        isOpen={!!activeRateProfileId}
-        onClose={() => setActiveRateProfileId(null)}
-        profile={data.find(p => p.id === activeRateProfileId) || null}
-        onUpdateRates={(id, rates) => updateRow(id, 'rateHistory', rates)}
+      <ProfileDrawer
+        isOpen={!!selectedProfileIdForDrawer}
+        onClose={() => setSelectedProfileIdForDrawer(null)}
+        profile={activeDrawerProfile}
+        onUpdateRow={updateRow}
         theme={theme}
+        tiers={dynamicTiers}
+        locations={dynamicLocations}
+        groups={dynamicGroups}
+        campaigns={dynamicCampaigns}
+        sows={dynamicSow}
+        calculateFitScore={calculateFitScore}
+        defaultTab={drawerDefaultTab}
+        onOpenOutreach={(profile) => {
+          setOutreachTargets([profile]);
+          setShowOutreachComposer(true);
+          setSelectedProfileIdForDrawer(null);
+        }}
+        onOpenQuotation={(profile) => {
+          setQuotationTarget(profile);
+          setShowQuotationParser(true);
+          setSelectedProfileIdForDrawer(null);
+        }}
       />
 
       {showOutreachComposer && (
@@ -1333,6 +1771,13 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
           theme={theme}
         />
       )}
+
+      <KPIDashboardModal
+        isOpen={showKPIDashboard}
+        onClose={() => setShowKPIDashboard(false)}
+        data={filteredAndSortedData}
+        theme={theme}
+      />
     </div>
   );
 }

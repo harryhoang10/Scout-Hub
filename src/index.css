@@ -116,6 +116,24 @@ input[type="checkbox"] {
   animation: fadeIn 0.2s ease-out forwards;
 }
 
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes fadeInBackdrop {
+  from { opacity: 0; backdrop-filter: blur(0px); }
+  to { opacity: 1; backdrop-filter: blur(4px); }
+}
+
+.slide-in-right {
+  animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.fade-in-backdrop {
+  animation: fadeInBackdrop 0.25s ease-out forwards;
+}
+
 /* ============ Light theme utility overrides ============ */
 
 /* Sidebar */

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { UniversalExtractor } from './components/UniversalExtractor';
 import { ScoutCRM } from './components/ScoutCRM';
 import { RestoredData } from './types';
-import { Radar, Database, Menu, X, Sun, Moon, Settings, Briefcase } from 'lucide-react';
+import { Radar, Database, Menu, X, Sun, Moon, Settings, Briefcase, Sparkles, Key, Layers, BookOpen, ExternalLink, Check, Copy, HelpCircle, Cpu, AlertTriangle, ShieldCheck, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { fetchFromSheet } from './lib/api';
 import { hydrateRestoredProfile, mergeProfileBatch } from './lib/profileChangeDetection';
 
@@ -378,23 +378,29 @@ function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: st
   const [testMsg, setTestMsg] = useState('');
   const [showGuide, setShowGuide] = useState(false);
   const [showBookmarkletGuide, setShowBookmarkletGuide] = useState(false);
+  const [showGeminiGuide, setShowGeminiGuide] = useState(false);
+  const [showRapidApiGuide, setShowRapidApiGuide] = useState(false);
   const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('scout_hub_gemini_key') || '');
   const [aiBaseUrl, setAiBaseUrl] = useState(() => localStorage.getItem('scout_hub_ai_base_url') || 'https://generativelanguage.googleapis.com/v1beta/openai/');
   const [aiModel, setAiModel] = useState(() => localStorage.getItem('scout_hub_ai_model') || 'gemini-2.5-flash');
   const [rapidApiKey, setRapidApiKey] = useState(() => localStorage.getItem('scout_hub_rapidapi_key') || '');
   const [keysSaved, setKeysSaved] = useState(false);
-  const isDark = theme === 'dark';
+  const [copiedScript, setCopiedScript] = useState(false);
+  const [copiedBookmarklet, setCopiedBookmarklet] = useState(false);
 
+  const isDark = theme === 'dark';
   const hostOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
 
-  const cardBg = isDark ? 'bg-white/[0.03] border-white/[0.06]' : 'bg-white border-slate-200';
-  const inputBg = isDark ? 'bg-white/5 border-white/10 text-white placeholder-slate-500' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400';
+  const cardBg = isDark ? 'bg-white/[0.02] border-white/[0.06] shadow-xl backdrop-blur-md hover:border-white/[0.1] transition-all duration-300' : 'bg-white border-slate-200/80 shadow-md hover:shadow-lg transition-all duration-300';
+  const inputBg = isDark ? 'bg-white/[0.04] border-white/[0.08] text-white placeholder-slate-500 focus:border-violet-500/80 focus:bg-white/[0.06]' : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400 focus:border-violet-500/80 focus:bg-white';
   const textP = isDark ? 'text-white' : 'text-slate-900';
   const textS = isDark ? 'text-slate-400' : 'text-slate-500';
   const textM = isDark ? 'text-slate-500' : 'text-slate-400';
-  const codeBg = isDark ? 'bg-black/30 border-white/5' : 'bg-slate-50 border-slate-200';
-  const codeText = isDark ? 'text-emerald-400' : 'text-emerald-700';
+  const codeBg = isDark ? 'bg-black/40 border-white/[0.06]' : 'bg-slate-100 border-slate-200';
+  const codeText = isDark ? 'text-violet-400' : 'text-violet-700';
+
   const parsedRapidApiKeys = parseRapidApiKeyPool(rapidApiKey);
+  
   const bookmarkletCode = `javascript:(function(){try{var url=window.location.href;var host=window.location.hostname;var isTikTok=/tiktok\\.com/i.test(host);var isFacebook=/(facebook\\.com|fb\\.com|fb\\.watch)/i.test(host);if(!isTikTok&&!isFacebook){alert('Scout Hub chỉ hỗ trợ TikTok hoặc Facebook profile!');return;}var data={url:url,scrapedAt:new Date().toISOString()};if(isTikTok){data.platform='TikTok';var nickEl=document.querySelector('[data-e2e="user-title"]')||document.querySelector('h1');data.nickname=nickEl?nickEl.textContent.trim():'';var subEl=document.querySelector('[data-e2e="user-subtitle"]')||document.querySelector('h2');if(subEl){data.channelId=subEl.textContent.trim().replace(/^@/,'');}else{var match=url.match(/@([^/?#]+)/);data.channelId=match?match[1]:'';}var followersEl=document.querySelector('[data-e2e="followers-count"]');data.followers=followersEl?followersEl.textContent.trim():'';var followingEl=document.querySelector('[data-e2e="following-count"]');data.following=followingEl?followingEl.textContent.trim():'';var likesEl=document.querySelector('[data-e2e="likes-count"]');data.likes=likesEl?likesEl.textContent.trim():'';var bioEl=document.querySelector('[data-e2e="user-desc"]');data.bio=bioEl?bioEl.textContent.trim():'';var imgEl=document.querySelector('[class*="Avatar"] img')||document.querySelector('img[src*="avatar"]');data.profilePic=imgEl?imgEl.src:'';var linkEl=document.querySelector('[data-e2e="user-link"] a')||document.querySelector('[data-e2e="user-link"]');data.bioLink=linkEl?linkEl.textContent.trim()||linkEl.href:'';}else if(isFacebook){data.platform='Facebook';var h1El=document.querySelector('h1');data.nickname=h1El?h1El.textContent.trim():'';var foundFollowers='';var bodyText=document.body.innerText;var pattern=/(\\d[\\d,.]*\\s*(?:triệu|nghìn|ngàn|[KkMm])?)\\s*(?:người theo dõi|followers|thành viên|members|lượt thích|likes)/i;var match=bodyText.match(pattern);if(match&&match[1]){foundFollowers=match[1].trim();}else{var els=document.querySelectorAll('a[href*="followers"],span');for(var i=0;i<els.length;i++){var text=els[i].textContent||'';if(/followers|người theo dõi|likes|thành viên/i.test(text)){var m=text.match(/[\\d,.]+\\s*[KkMm]?/);if(m){foundFollowers=m[0].trim();break;}}}}data.followers=foundFollowers;var spans=document.querySelectorAll('span');var introEl=document.querySelector('div[class*="x193iq5w"]')||document.querySelector('span[class*="x193iq5w"]');if(!introEl){for(var i=0;i<spans.length;i++){if(spans[i].textContent.includes('Giới thiệu')||spans[i].textContent.includes('Intro')){introEl=spans[i];break;}}}data.bio=introEl?introEl.textContent.trim():'';var avatarImg=document.querySelector('svg[role="img"] image')||document.querySelector('g image')||document.querySelector('img[src*="profile"]');data.profilePic=avatarImg?(avatarImg.getAttribute('xlink:href')||avatarImg.src):'';}var textToScan=[data.nickname,data.bio,document.body.innerText].join(' ');var emailMatch=textToScan.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);data.email=emailMatch?emailMatch[0]:'';var phoneMatch=textToScan.match(/(?:\\+84|0)(?:\\s*\\d){9,10}/);data.phone=phoneMatch?phoneMatch[0].replace(/\\s+/g,''):'';var jsonStr=JSON.stringify(data);var base64=btoa(encodeURIComponent(jsonStr).replace(/%([0-9A-F]{2})/g,function(match,p1){return String.fromCharCode(parseInt(p1,16));}));var target='${hostOrigin}/?addProfileData='+encodeURIComponent(base64);var win=window.open(target,'_blank');if(win){win.focus();}else{window.location.href=target;}}catch(err){alert('Lỗi trích xuất: '+err.message);}})();`;
 
   const handleSave = () => {
@@ -413,25 +419,36 @@ function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: st
   const handleTest = async () => {
     if (!url.trim()) return;
     setTestStatus('testing');
-    setTestMsg('');
     try {
-      const res = await fetch('/api/webhook/get', {
+      const response = await fetch(url.trim(), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ webhookUrl: url.trim() }),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'test_connection',
+          timestamp: new Date().toISOString(),
+        }),
       });
-      const data = await res.json();
-      if (data.success) {
+
+      if (response.ok) {
+        const text = await response.text();
         setTestStatus('success');
-        setTestMsg('Kết nối thành công! ✓');
+        setTestMsg(`Kết nối Apps Script Webhook thành công! Phản hồi từ server: ${text.slice(0, 100)}`);
       } else {
         setTestStatus('error');
-        setTestMsg(`Lỗi: ${data.error || 'Response không ok'}`);
+        setTestMsg(`Lỗi kết nối (HTTP ${response.status}). Vui lòng kiểm tra lại URL Apps Script.`);
       }
     } catch (e: any) {
       setTestStatus('error');
-      setTestMsg(`Lỗi: ${e.message}`);
+      setTestMsg(`Không thể kết nối đến Webhook: ${e.message}. Hãy chắc chắn URL bắt đầu bằng https:// và Web App đã được chọn quyền Anyone.`);
     }
+  };
+
+  const copyToClipboard = (text: string, setCopied: (b: boolean) => void) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const appsScriptCode = `const COLUMNS = [
@@ -571,227 +588,540 @@ function doGet(e) {
 }`;
 
   return (
-    <div className="space-y-5 max-w-3xl">
-      {/* Webhook URL */}
-      <div className={`rounded-xl border p-5 ${cardBg}`}>
-        <h3 className={`text-base font-semibold ${textP} mb-1`}>Google Sheets Webhook</h3>
-        <p className={`text-xs ${textS} mb-4`}>
-          Kết nối với Google Sheet qua Apps Script để tự động lưu trữ profile.
+    <div className="space-y-8 max-w-4xl pb-32 animate-fade-in">
+      
+      {/* HEADER SECTION */}
+      <div className="flex flex-col gap-1.5 border-b border-white/[0.06] pb-4 mb-6">
+        <h2 className={`text-xl font-bold ${textP} flex items-center gap-2`}>
+          <Settings className="w-6 h-6 text-violet-500 animate-spin-slow" />
+          Cài đặt & Cấu hình Hệ thống
+        </h2>
+        <p className={`text-sm ${textS}`}>
+          Quản lý kết nối Cơ sở dữ liệu Google Sheets, Gemini AI Engine, các kho khóa RapidAPI và Tiện ích Bookmarklet đồng bộ nhanh.
         </p>
+      </div>
 
-        <div className="space-y-3">
-          <div>
-            <label className={`text-xs font-medium ${textS} mb-1 block`}>Apps Script Web App URL</label>
-            <div className="flex gap-2">
+      {/* 1. GOOGLE SHEETS WEBHOOK CARD */}
+      <div className={`rounded-2xl border p-6 transition-all duration-300 ${cardBg}`}>
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-500">
+              <Database className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className={`text-base font-bold ${textP}`}>Đồng bộ Google Sheets (CRM Sync)</h3>
+              <p className={`text-xs md:text-sm ${textS} mt-0.5`}>
+                Kết nối ScoutHub với bảng tính Google Sheets qua Apps Script để lưu trữ và quản lý tập trung dữ liệu.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="flex flex-col gap-1.5">
+            <label className={`text-xs font-bold uppercase tracking-wider ${textS}`}>Apps Script Web App URL</label>
+            <div className="flex flex-col sm:flex-row gap-2.5">
               <input
                 type="text"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="https://script.google.com/macros/s/xxxxx/exec"
-                className={`flex-1 px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${inputBg}`}
+                className={`flex-1 px-4 py-2.5 text-sm rounded-xl border focus:outline-none focus:ring-2 focus:ring-violet-500/30 transition-all ${inputBg}`}
               />
-              <button
-                onClick={handleSave}
-                className="px-4 py-2 text-sm font-medium bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors whitespace-nowrap"
-              >
-                {keysSaved ? 'Đã lưu ✓' : 'Lưu tất cả'}
-              </button>
               <button
                 onClick={handleTest}
                 disabled={!url.trim() || testStatus === 'testing'}
-                className={`px-4 py-2 text-sm font-medium border rounded-lg transition-colors disabled:opacity-40 whitespace-nowrap ${isDark ? 'border-white/10 text-slate-300 hover:bg-white/5' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                className={`px-5 py-2.5 text-sm font-bold border rounded-xl transition-all duration-200 disabled:opacity-40 whitespace-nowrap active:scale-[0.98] flex items-center justify-center gap-2 ${
+                  isDark ? 'border-white/10 text-slate-300 hover:bg-white/5' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
               >
-                {testStatus === 'testing' ? 'Đang test...' : 'Test'}
+                {testStatus === 'testing' ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Đang kết nối...</span>
+                  </>
+                ) : (
+                  <>
+                    <ExternalLink className="w-4 h-4" />
+                    <span>Kiểm tra kết nối</span>
+                  </>
+                )}
               </button>
             </div>
             {testMsg && (
-              <p className={`text-xs mt-2 ${testStatus === 'success' ? 'text-emerald-400' : 'text-red-400'}`}>
-                {testMsg}
-              </p>
+              <div className={`mt-2 p-3 rounded-xl border text-xs leading-relaxed flex items-start gap-2 ${
+                testStatus === 'success' 
+                  ? 'bg-emerald-500/5 border-emerald-500/10 text-emerald-400' 
+                  : 'bg-rose-500/5 border-rose-500/10 text-rose-400'
+              }`}>
+                {testStatus === 'success' ? (
+                  <ShieldCheck className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                )}
+                <span>{testMsg}</span>
+              </div>
             )}
           </div>
-          
-          <div className="pt-3 border-t border-white/10 space-y-3">
-             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                 <div>
-                    <label className={`text-xs font-medium ${textS} mb-1 block`}>AI API Key (Google, OpenRouter, Groq...)</label>
-                    <input
-                      type="password"
-                      value={geminiKey}
-                      onChange={(e) => setGeminiKey(e.target.value)}
-                      placeholder="AIzaSy... hoặc sk-or-v1-..."
-                      className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${inputBg}`}
-                    />
-                 </div>
-                 <div>
-                    <label className={`text-xs font-medium ${textS} mb-1 block`}>AI Base URL (Tương thích OpenAI)</label>
-                    <input
-                      type="text"
-                      value={aiBaseUrl}
-                      onChange={(e) => setAiBaseUrl(e.target.value)}
-                      placeholder="https://generativelanguage.googleapis.com/v1beta/openai/"
-                      className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${inputBg}`}
-                    />
-                 </div>
-                 <div>
-                    <label className={`text-xs font-medium ${textS} mb-1 block`}>AI Model Name (Ví dụ: gemini-2.5-flash)</label>
-                    <input
-                      type="text"
-                      value={aiModel}
-                      onChange={(e) => setAiModel(e.target.value)}
-                      placeholder="gemini-2.5-flash"
-                      className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${inputBg}`}
-                    />
-                 </div>
+
+          {/* Apps Script Guide Collapsible */}
+          <div className={`rounded-xl border transition-all duration-200 overflow-hidden ${
+            isDark ? 'bg-slate-900/40 border-white/[0.05]' : 'bg-slate-50 border-slate-200/60'
+          }`}>
+            <button
+              onClick={() => setShowGuide(!showGuide)}
+              className="flex items-center justify-between px-4 py-3.5 w-full text-left transition-colors hover:bg-slate-500/5"
+            >
+              <div className="flex items-center gap-2 text-xs md:text-sm font-bold text-violet-500">
+                <BookOpen className="w-4.5 h-4.5" />
+                <span>📖 Hướng dẫn liên kết Google Sheets & Webhook chi tiết</span>
               </div>
-              <p className={`text-[10px] ${textM} mt-1`}>
-                Mặc định sử dụng Google Gemini API (Free, không cần liên kết thẻ ngân hàng nếu lấy key ở AI Studio). Bạn có thể đổi sang **OpenRouter** (base URL: `https://openrouter.ai/api/v1/`, model: `google/gemini-2.5-flash` hoặc các model miễn phí khác), **Groq** (`https://api.groq.com/openai/v1/`), hoặc chạy offline cục bộ bằng **Ollama** (`http://localhost:11434/v1/`).
-              </p>
-             <div>
-                <label className={`text-xs font-medium ${textS} mb-1 block`}>RapidAPI Key Pool (Mỗi key 1 dòng, auto xoay vòng khi quota)</label>
-                <textarea
-                  value={rapidApiKey}
-                  onChange={(e) => setRapidApiKey(e.target.value)}
-                  rows={Math.max(3, Math.min(6, parsedRapidApiKeys.length || 3))}
-                  spellCheck={false}
-                  placeholder={'key_1\nkey_2\nkey_3'}
-                  className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-violet-500/50 font-mono resize-y ${inputBg}`}
-                />
-                <p className={`text-[10px] ${textM} mt-1`}>
-                  {parsedRapidApiKeys.length > 0
-                    ? `Đã nhận diện ${parsedRapidApiKeys.length} key. Server sẽ round-robin, tự cooldown key bị 429, và tự chuyển key khác khi quota cạn.`
-                    : 'Bạn có thể paste nhiều key, mỗi key một dòng hoặc ngăn cách bằng dấu phẩy. Server sẽ tự xoay vòng khi một key hết quota.'}
-                </p>
-             </div>
+              {showGuide ? <ChevronUp className="w-4.5 h-4.5 text-violet-500" /> : <ChevronDown className="w-4.5 h-4.5 text-violet-500" />}
+            </button>
+
+            {showGuide && (
+              <div className="px-5 pb-5 pt-2 space-y-4 text-xs md:text-sm border-t border-white/[0.05] leading-relaxed text-slate-300">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-violet-500/20 text-violet-400 font-bold text-xs">1</span>
+                    <h4 className={`font-bold ${textP}`}>Khởi tạo Google Sheet và đặt tên cột</h4>
+                  </div>
+                  <p className={textS}>
+                    Truy cập <a href="https://sheets.google.com" target="_blank" rel="noreferrer" className="text-violet-400 hover:text-violet-300 font-semibold underline inline-flex items-center gap-0.5">Google Sheets <ExternalLink className="w-3 h-3 inline" /></a> và tạo một bảng tính mới. Nếu chưa có header ở dòng đầu tiên, Apps Script sẽ tự động tạo cấu trúc tiêu chuẩn cho bạn khi chạy lần đầu.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-violet-500/20 text-violet-400 font-bold text-xs">2</span>
+                    <h4 className={`font-bold ${textP}`}>Dán mã nguồn Apps Script</h4>
+                  </div>
+                  <p className={textS}>
+                    Trong trang Google Sheet, chọn menu <b>Extensions (Tiện ích mở rộng) ➔ Apps Script</b>. Xóa sạch mọi mã nguồn mặc định và dán toàn bộ đoạn code dưới đây:
+                  </p>
+                  
+                  <div className="relative rounded-xl border overflow-hidden bg-black/30 border-white/[0.06] mt-2.5">
+                    <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.05] bg-black/25">
+                      <span className="text-[10px] font-mono text-slate-500">Google Apps Script Code (Code.gs)</span>
+                      <button
+                        onClick={() => copyToClipboard(appsScriptCode, setCopiedScript)}
+                        className="px-2.5 py-1 text-[10px] font-bold bg-violet-600 hover:bg-violet-700 text-white rounded-md transition-all active:scale-95 flex items-center gap-1"
+                      >
+                        {copiedScript ? (
+                          <>
+                            <Check className="w-3 h-3" />
+                            <span>Đã copy!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>Sao chép mã</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <pre className="text-xs text-slate-400 p-4 max-h-56 overflow-y-auto overflow-x-auto leading-relaxed font-mono whitespace-pre">{appsScriptCode}</pre>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-violet-500/20 text-violet-400 font-bold text-xs">3</span>
+                    <h4 className={`font-bold ${textP}`}>Deploy dưới dạng Web App (Quyết định khả năng đồng bộ)</h4>
+                  </div>
+                  <p className={textS}>
+                    Thực hiện cấu hình deployment theo các bước chuẩn xác sau:
+                  </p>
+                  <ul className="list-disc pl-5 space-y-1 text-slate-400 mt-1">
+                    <li>Nhấp nút <b>Deploy (Triển khai)</b> ở góc phải màn hình chọn <b>New Deployment (Triển khai mới)</b>.</li>
+                    <li>Bấm vào biểu tượng bánh răng cài đặt và chọn loại triển khai là <b>Web App (Ứng dụng web)</b>.</li>
+                    <li>Mục <b>Execute as (Thực thi dưới dạng)</b>: Chọn tài khoản của bạn (<b>Me / Tôi</b>).</li>
+                    <li>Mục <b>Who has access (Ai có quyền truy cập)</b>: Bắt buộc chọn <b>Anyone (Mọi người)</b> để ứng dụng kết nối từ xa.</li>
+                    <li>Bấm <b>Deploy</b>. Google sẽ yêu cầu phê duyệt bảo mật tài khoản, hãy cấp quyền đầy đủ cho ứng dụng.</li>
+                    <li>Sau khi deploy thành công, hãy copy đường dẫn <b>Web App URL</b> (kết thúc bằng `/exec`) dán vào ô URL phía trên.</li>
+                  </ul>
+                </div>
+
+                <div className={`p-3.5 rounded-xl border leading-relaxed flex gap-2.5 ${
+                  isDark ? 'bg-amber-500/5 border-amber-500/15 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-800'
+                }`}>
+                  <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5 text-amber-500" />
+                  <div>
+                    <span className="font-bold block mb-0.5">⚠️ Lưu ý cực kỳ quan trọng:</span>
+                    Mỗi lần bạn chỉnh sửa mã nguồn Apps Script, bạn bắt buộc phải tạo <b>New Deployment mới</b> (hoặc chỉnh sửa phiên bản đang hoạt động và tăng số Version lên) thì thay đổi mới có hiệu lực trên URL Webhook.
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Setup Guide */}
-      <div className={`rounded-xl border p-5 ${cardBg}`}>
-        <button
-          onClick={() => setShowGuide(!showGuide)}
-          className={`flex items-center gap-2 text-base font-semibold ${textP} w-full text-left`}
-        >
-          <span>📖 Hướng dẫn cài đặt Google Sheet + Apps Script</span>
-          <span className={`text-xs ${textM} ml-auto`}>{showGuide ? '▲ Thu gọn' : '▼ Xem chi tiết'}</span>
-        </button>
-        
-        {showGuide && (
-          <div className={`mt-4 space-y-4 text-sm ${textS}`}>
+      {/* 2. AI CONFIGURATION CARD */}
+      <div className={`rounded-2xl border p-6 transition-all duration-300 ${cardBg}`}>
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-500">
+              <Cpu className="w-5 h-5" />
+            </div>
             <div>
-              <h4 className={`font-semibold ${textP} mb-2`}>Bước 1: Tạo Google Sheet</h4>
-              <ol className="list-decimal pl-5 space-y-1">
-                <li>Mở <a href="https://sheets.google.com" target="_blank" rel="noreferrer" className="text-violet-400 hover:text-violet-300">Google Sheets</a> và tạo 1 sheet mới</li>
-                <li>Đặt tên cho sheet và thêm header ở dòng đầu tiên (nếu để trống code sẽ tự động tạo Header):
-                  <code className={`text-xs ${codeText} block mt-1`}>Ngày lưu trữ | Platform | Tên | ID | Followers | Avg View | Avg Engagement | SĐT | Email | Link Bio | Link | Bio | Avatar | Profile | Tier | Vị trí | Nhóm | Campaign | SOW | Notes | Rate History | Rating | Workflow</code>
-                </li>
-              </ol>
-            </div>
-            
-            <div>
-              <h4 className={`font-semibold ${textP} mb-2`}>Bước 2: Tạo Apps Script</h4>
-              <ol className="list-decimal pl-5 space-y-1">
-                <li>Trong Google Sheet, vào <strong>Extensions → Apps Script</strong></li>
-                <li>Xóa toàn bộ code mặc định, paste đoạn code bên dưới:</li>
-              </ol>
-            </div>
-
-            <div className={`relative rounded-lg border p-4 overflow-x-auto ${codeBg}`}>
-              <button
-                onClick={() => navigator.clipboard.writeText(appsScriptCode)}
-                className="absolute top-2 right-2 px-2 py-1 text-[10px] font-medium bg-violet-600 text-white rounded hover:bg-violet-700 transition-colors"
-              >
-                Copy
-              </button>
-              <pre className={`text-[11px] ${codeText} whitespace-pre`}>{appsScriptCode}</pre>
-            </div>
-
-            <div>
-              <h4 className={`font-semibold ${textP} mb-2`}>Bước 3: Deploy Web App</h4>
-              <ol className="list-decimal pl-5 space-y-1">
-                <li>Nhấn <strong>Deploy → New Deployment</strong></li>
-                <li>Chọn type: <strong>Web App</strong></li>
-                <li>Execute as: <strong>Me</strong></li>
-                <li>Who has access: <strong>Anyone</strong></li>
-                <li>Nhấn <strong>Deploy</strong>, authorize nếu cần</li>
-                <li>Copy <strong>Web App URL</strong> và paste vào ô phía trên</li>
-              </ol>
-            </div>
-
-            <div className={`p-3 rounded-lg ${isDark ? 'bg-amber-500/10 border border-amber-500/20' : 'bg-amber-50 border border-amber-200'}`}>
-              <p className={`text-xs ${isDark ? 'text-amber-300' : 'text-amber-700'}`}>
-                ⚠️ <strong>Lưu ý:</strong> Mỗi khi sửa code Apps Script, cần tạo <strong>New Deployment</strong> mới (không phải update). URL deploy sẽ thay đổi.
+              <h3 className={`text-base font-bold ${textP}`}>Trí tuệ Nhân tạo (Gemini AI Engine)</h3>
+              <p className={`text-xs md:text-sm ${textS} mt-0.5`}>
+                Cấu hình API Key và tên model AI để tự động soạn thư mời đối tác, tin nhắn và bóc tách báo giá KOLs.
               </p>
             </div>
           </div>
-        )}
+        </div>
+
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label className={`text-xs font-bold uppercase tracking-wider ${textS}`}>Gemini API Key</label>
+              <input
+                type="password"
+                value={geminiKey}
+                onChange={(e) => setGeminiKey(e.target.value)}
+                placeholder="AIzaSy... hoặc sk-or-v1-..."
+                className={`px-4 py-2.5 text-sm rounded-xl border focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all ${inputBg}`}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className={`text-xs font-bold uppercase tracking-wider ${textS}`}>AI Base URL (Tương thích OpenAI)</label>
+              <input
+                type="text"
+                value={aiBaseUrl}
+                onChange={(e) => setAiBaseUrl(e.target.value)}
+                placeholder="https://generativelanguage.googleapis.com/v1beta/openai/"
+                className={`px-4 py-2.5 text-sm rounded-xl border focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all ${inputBg}`}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className={`text-xs font-bold uppercase tracking-wider ${textS}`}>AI Model Name</label>
+              <input
+                type="text"
+                value={aiModel}
+                onChange={(e) => setAiModel(e.target.value)}
+                placeholder="gemini-2.5-flash"
+                className={`px-4 py-2.5 text-sm rounded-xl border focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all ${inputBg}`}
+              />
+            </div>
+          </div>
+
+          {/* Gemini Guide Collapsible */}
+          <div className={`rounded-xl border transition-all duration-200 overflow-hidden ${
+            isDark ? 'bg-slate-900/40 border-white/[0.05]' : 'bg-slate-50 border-slate-200/60'
+          }`}>
+            <button
+              onClick={() => setShowGeminiGuide(!showGeminiGuide)}
+              className="flex items-center justify-between px-4 py-3.5 w-full text-left transition-colors hover:bg-slate-500/5"
+            >
+              <div className="flex items-center gap-2 text-xs md:text-sm font-bold text-indigo-500">
+                <Key className="w-4.5 h-4.5" />
+                <span>🔑 Hướng dẫn lấy Gemini API Key và cấu hình AI chi tiết</span>
+              </div>
+              {showGeminiGuide ? <ChevronUp className="w-4.5 h-4.5 text-indigo-500" /> : <ChevronDown className="w-4.5 h-4.5 text-indigo-500" />}
+            </button>
+
+            {showGeminiGuide && (
+              <div className="px-5 pb-5 pt-2 space-y-4 text-xs md:text-sm border-t border-white/[0.05] leading-relaxed text-slate-300">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-400 font-bold text-xs">1</span>
+                    <h4 className={`font-bold ${textP}`}>Đăng ký tại Google AI Studio</h4>
+                  </div>
+                  <p className={textS}>
+                    Truy cập cổng thông tin phát triển AI chính thức của Google tại địa chỉ: <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" className="text-indigo-400 hover:text-indigo-300 font-bold hover:underline inline-flex items-center gap-0.5">Google AI Studio <ExternalLink className="w-3.5 h-3.5 inline" /></a>. Đăng nhập bằng tài khoản Google/Gmail bất kỳ của bạn. Hoàn toàn miễn phí và không cần nhập thẻ Visa/Mastercard.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-400 font-bold text-xs">2</span>
+                    <h4 className={`font-bold ${textP}`}>Khởi tạo API Key mới</h4>
+                  </div>
+                  <p className={textS}>
+                    Tại trang quản trị, nhấp nút màu xanh dương <b>"Get API Key"</b> ở thanh menu bên trái. Tiếp tục chọn <b>"Create API Key"</b>, hệ thống sẽ mở ra một popup.
+                  </p>
+                  <p className={textS}>
+                    Chọn một dự án Google Cloud hiện có hoặc nhấn tạo dự án mới, sau đó click chọn <b>"Create API Key in existing project"</b>. Quá trình tạo diễn ra tự động chỉ trong vòng 2 giây.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-400 font-bold text-xs">3</span>
+                    <h4 className={`font-bold ${textP}`}>Sao chép và cấu hình trên ScoutHub</h4>
+                  </div>
+                  <p className={textS}>
+                    Copy chuỗi khóa vừa nhận được (bắt đầu bằng tiền tố <code>AIzaSy...</code>) và dán trực tiếp vào trường <b>Gemini API Key</b> ở trên.
+                  </p>
+                  <p className={textS}>
+                    <b>💡 Lời khuyên thiết lập tối ưu:</b>
+                  </p>
+                  <ul className="list-disc pl-5 space-y-1 text-slate-400">
+                    <li><b>AI Base URL:</b> Giữ nguyên cấu hình mặc định là <code>https://generativelanguage.googleapis.com/v1beta/openai/</code> (đây là endpoint API chuẩn mực cung cấp tốc độ phản hồi cực nhanh).</li>
+                    <li><b>AI Model Name:</b> Sử dụng model <code>gemini-2.5-flash</code> (Model siêu nhanh, xử lý tức thì, chi phí token cực rẻ và thường miễn phí không giới hạn trong gói Free Tier). Ngoài ra bạn cũng có thể điền <code>gemini-2.5-pro</code> nếu muốn AI xử lý những văn bản SOW hoặc email phức tạp đòi hỏi chiều sâu suy luận cao.</li>
+                  </ul>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* Bookmarklet Guide */}
-      <div className={`rounded-xl border p-5 ${cardBg} mt-5`}>
-        <button
-          onClick={() => setShowBookmarkletGuide(!showBookmarkletGuide)}
-          className={`flex items-center gap-2 text-base font-semibold ${textP} w-full text-left`}
-        >
-          <span>🔖 Tiện ích Bookmarklet (Trích xuất nhanh)</span>
-          <span className={`text-xs ${textM} ml-auto`}>{showBookmarkletGuide ? '▲ Thu gọn' : '▼ Xem chi tiết'}</span>
-        </button>
-        
-        {showBookmarkletGuide && (
-          <div className={`mt-4 space-y-4 text-sm ${textS}`}>
-            <p className={`text-[13px] ${textM}`}>
-              Sử dụng Bookmarklet để đưa profile TikTok/Facebook đang xem vào Extractor queue chỉ với 1 click.
-            </p>
+      {/* 3. EXTRACTOR CONFIGURATION CARD */}
+      <div className={`rounded-2xl border p-6 transition-all duration-300 ${cardBg}`}>
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500">
+              <Layers className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className={`text-base font-bold ${textP}`}>Bộ Cào Profile (Extractor API Engine)</h3>
+              <p className={`text-xs md:text-sm ${textS} mt-0.5`}>
+                Thiết lập bể chứa khóa (Key Pool) của RapidAPI để cào hàng trăm profile TikTok và Facebook an toàn, vượt qua giới hạn chặn IP.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="flex flex-col gap-1.5">
+            <label className={`text-xs font-bold uppercase tracking-wider ${textS}`}>RapidAPI Key Pool (Mỗi dòng nhập 1 Key riêng biệt)</label>
+            <textarea
+              value={rapidApiKey}
+              onChange={(e) => setRapidApiKey(e.target.value)}
+              rows={Math.max(3, Math.min(6, parsedRapidApiKeys.length || 3))}
+              spellCheck={false}
+              placeholder={'key_example_1\nkey_example_2\nkey_example_3'}
+              className={`w-full px-4 py-3 text-sm rounded-xl border focus:outline-none focus:ring-2 focus:ring-emerald-500/30 font-mono resize-y leading-relaxed transition-all ${inputBg}`}
+            />
+            {parsedRapidApiKeys.length > 0 && (
+              <div className="mt-2.5 p-3 rounded-xl border border-emerald-500/15 bg-emerald-500/5 text-xs text-emerald-400 font-semibold flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 flex-shrink-0" />
+                <span>Hệ thống nhận diện {parsedRapidApiKeys.length} khóa RapidAPI hoạt động. Cơ chế Xoay vòng Round-Robin, tự ngắt key quá hạn mức (429 Cool-down) và chuyển đổi dự phòng thông minh đã được kích hoạt ngầm!</span>
+              </div>
+            )}
+          </div>
+
+          {/* RapidAPI Guide Collapsible */}
+          <div className={`rounded-xl border transition-all duration-200 overflow-hidden ${
+            isDark ? 'bg-slate-900/40 border-white/[0.05]' : 'bg-slate-50 border-slate-200/60'
+          }`}>
+            <button
+              onClick={() => setShowRapidApiGuide(!showRapidApiGuide)}
+              className="flex items-center justify-between px-4 py-3.5 w-full text-left transition-colors hover:bg-slate-500/5"
+            >
+              <div className="flex items-center gap-2 text-xs md:text-sm font-bold text-emerald-500">
+                <HelpCircle className="w-4.5 h-4.5" />
+                <span>🔑 Hướng dẫn lấy RapidAPI Key & Cách đăng ký các Scraper cần thiết</span>
+              </div>
+              {showRapidApiGuide ? <ChevronUp className="w-4.5 h-4.5 text-emerald-500" /> : <ChevronDown className="w-4.5 h-4.5 text-emerald-500" />}
+            </button>
+
+            {showRapidApiGuide && (
+              <div className="px-5 pb-5 pt-2 space-y-4 text-xs md:text-sm border-t border-white/[0.05] leading-relaxed text-slate-300">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-xs">1</span>
+                    <h4 className={`font-bold ${textP}`}>Đăng ký tài khoản RapidAPI</h4>
+                  </div>
+                  <p className={textS}>
+                    Truy cập cổng dịch vụ API lớn nhất toàn cầu: <a href="https://rapidapi.com" target="_blank" rel="noreferrer" className="text-emerald-400 hover:text-emerald-300 font-bold hover:underline inline-flex items-center gap-0.5">RapidAPI.com <ExternalLink className="w-3.5 h-3.5 inline" /></a>. Đăng ký một tài khoản nhà phát triển miễn phí thông qua email hoặc liên kết GitHub/Google.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-xs">2</span>
+                    <h4 className={`font-bold ${textP}`}>Tìm kiếm và Subscribe các Scraper API phù hợp</h4>
+                  </div>
+                  <p className={textS}>
+                    Nhập tìm kiếm và đăng ký sử dụng các API cào dữ liệu mạng xã hội trên nền tảng. Các bộ cào được khuyến nghị:
+                  </p>
+                  <ul className="list-disc pl-5 space-y-1.5 text-slate-400 mt-1">
+                    <li><b>TikTok Scraper:</b> Tìm kiếm <b>"TikWM TikTok API"</b> hoặc <b>"TikTok Scraper API"</b>. Bấm chọn gói dịch vụ (<b>Pricing</b>) và đăng ký gói <b>Free Tier</b> (thường cung cấp từ 100 đến 500 lượt cào miễn phí mỗi ngày).</li>
+                    <li><b>Facebook Scraper:</b> Tìm kiếm <b>"Facebook Scraper API"</b> hoặc <b>"Facebook Data Scraper"</b>, tiến hành đăng ký gói dùng thử miễn phí tương ứng để nhận hạn mức cào của bạn.</li>
+                  </ul>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-xs">3</span>
+                    <h4 className={`font-bold ${textP}`}>Lấy Header Parameter X-RapidAPI-Key</h4>
+                  </div>
+                  <p className={textS}>
+                    Sau khi Subscribe, bạn hãy chuyển sang tab <b>Endpoints</b> của API đó. Tại khung điều khiển code ở cột bên phải, cuộn xuống phần <b>Header Parameters</b>.
+                  </p>
+                  <p className={textS}>
+                    Tìm kiếm tham số có tên <code>X-RapidAPI-Key</code>. Sao chép chuỗi mã hóa dài (khoảng 50 ký tự) bên cạnh và dán trực tiếp vào ô cấu hình phía trên.
+                  </p>
+                </div>
+
+                <div className={`p-3.5 rounded-xl border leading-relaxed flex gap-2.5 ${
+                  isDark ? 'bg-indigo-500/5 border-indigo-500/15 text-indigo-300' : 'bg-indigo-50 border-indigo-200 text-indigo-800'
+                }`}>
+                  <Sparkles className="w-5 h-5 flex-shrink-0 mt-0.5 text-indigo-500" />
+                  <div>
+                    <span className="font-bold block mb-0.5">🔥 Bí quyết Vượt rào giới hạn cào miễn phí (Bypass Free Rate Limits):</span>
+                    Các nhà phát triển API trên RapidAPI giới hạn số lượt cào miễn phí hàng ngày trên một tài khoản. Để tăng hiệu suất làm việc của IM team lên gấp 10 lần mà hoàn toàn không mất chi phí, bạn chỉ cần tạo 2 - 3 tài khoản RapidAPI phụ (hoặc nhờ các thành viên trong team tạo hộ), lấy các Key tương ứng và dán chúng vào ô <b>RapidAPI Key Pool</b> (mỗi key ở trên một dòng riêng biệt). Hệ thống sẽ tự động điều phối xoay vòng thông minh và đảm bảo công việc diễn ra thông suốt!
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 4. BOOKMARKLET UTILITY CARD */}
+      <div className={`rounded-2xl border p-6 transition-all duration-300 ${cardBg}`}>
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-500">
+              <Layers className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className={`text-base font-bold ${textP}`}>Tiện ích Trình duyệt Bookmarklet</h3>
+              <p className={`text-xs md:text-sm ${textS} mt-0.5`}>
+                Công cụ cào dữ liệu nhanh: Nhấp click dấu trang trên thanh trình duyệt khi đang xem TikTok/Facebook để import lập tức.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3.5 p-4 rounded-xl bg-slate-500/5 border border-white/[0.04]">
             <a
               href={bookmarkletCode}
               onClick={(event) => event.preventDefault()}
-              className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-semibold ${isDark ? 'bg-violet-500/10 border-violet-500/20 text-violet-200' : 'bg-violet-50 border-violet-200 text-violet-700'}`}
-              title="Kéo nút này lên thanh bookmark để tạo bookmarklet nhanh"
+              className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold border transition-all duration-200 hover:scale-105 active:scale-[0.98] shadow-md cursor-grab active:cursor-grabbing ${
+                isDark 
+                  ? 'bg-violet-500/10 border-violet-500/25 text-violet-300 hover:bg-violet-500/15' 
+                  : 'bg-violet-50 border-violet-200 text-violet-700 hover:bg-violet-100'
+              }`}
+              title="Kéo nút này lên thanh dấu trang (Bookmarks Bar)"
             >
-              Scout Hub Extract
-              <span className={`${textM} font-normal`}>kéo lên bookmark bar</span>
+              <Sparkles className="w-4.5 h-4.5" />
+              <span>🚀 Scout Hub Extract</span>
             </a>
-            <div>
-              <h4 className={`font-semibold ${textP} mb-2`}>Bước 1: Tạo Bookmarklet</h4>
-              <ol className="list-decimal pl-5 space-y-1">
-                <li>Hiển thị thanh dấu trang trên trình duyệt (Ctrl/Cmd + Shift + B).</li>
-                <li>Cách nhanh: kéo nút <strong>Scout Hub Extract</strong> ở trên lên thanh dấu trang.</li>
-                <li>Cách thủ công: chuột phải vào thanh dấu trang, chọn <strong>Thêm trang... (Add page...)</strong>.</li>
-                <li>Phần Tên (Name): nhập <strong>Scout Hub Extract</strong>.</li>
-                <li>Phần URL: paste đoạn JavaScript dưới đây vào và lưu lại.</li>
-              </ol>
-            </div>
             
-            <div className={`relative rounded-lg border p-4 overflow-x-auto ${codeBg}`}>
-              <button
-                onClick={() => navigator.clipboard.writeText(bookmarkletCode)}
-                className="absolute top-2 right-2 px-2 py-1 text-[10px] font-medium bg-violet-600 text-white rounded hover:bg-violet-700 transition-colors"
-              >
-                Copy
-              </button>
-              <pre className={`text-[11px] ${codeText} whitespace-pre-wrap`}>
-                {bookmarkletCode}
-              </pre>
-            </div>
+            <button
+              onClick={() => copyToClipboard(bookmarkletCode, setCopiedBookmarklet)}
+              className={`px-4 py-2.5 text-xs font-bold border rounded-xl transition-all duration-200 active:scale-[0.98] flex items-center justify-center gap-1.5 ${
+                isDark ? 'border-white/10 text-slate-300 hover:bg-white/5' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              {copiedBookmarklet ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Đã copy Bookmarklet!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copy Mã Bookmarklet</span>
+                </>
+              )}
+            </button>
 
-            <div>
-              <h4 className={`font-semibold ${textP} mb-2`}>Bước 2: Sử dụng</h4>
-              <ul className="list-disc pl-5 space-y-1">
-                <li>Vào bằng trình duyệt đến 1 trang profile TikTok hoặc Facebook bất kỳ.</li>
-                <li>Click vào dấu trang <strong>"Scout Hub Extract"</strong> vừa tạo trên thanh dấu trang.</li>
-                <li>Scout Hub sẽ mở tab Extractor mới, tự add link vào queue; bạn chỉ cần bấm chạy extract rồi lưu vào CRM.</li>
-              </ul>
-            </div>
-            <div className={`p-3 rounded-lg ${isDark ? 'bg-blue-500/10 border border-blue-500/20' : 'bg-blue-50 border border-blue-200'}`}>
-              <p className={`text-xs ${isDark ? 'text-blue-300' : 'text-blue-700'}`}>
-                📌 <strong>Ghi chú:</strong> Mã Bookmarklet ở trên đã tự động lấy đường dẫn hệ thống hiện tại của bạn ({hostOrigin}). 
-                Nếu popup bị chặn, bookmarklet sẽ chuyển tab hiện tại sang Scout Hub để không làm mất intake.
-              </p>
-            </div>
+            <span className={`text-xs ${textS}`}>
+              💡 Bạn có thể kéo nút màu tím lên thanh bookmark của trình duyệt hoặc nhấn Copy Mã rồi tự tạo Bookmarklet thủ công.
+            </span>
           </div>
-        )}
+
+          {/* Bookmarklet Guide Collapsible */}
+          <div className={`rounded-xl border transition-all duration-200 overflow-hidden ${
+            isDark ? 'bg-slate-900/40 border-white/[0.05]' : 'bg-slate-50 border-slate-200/60'
+          }`}>
+            <button
+              onClick={() => setShowBookmarkletGuide(!showBookmarkletGuide)}
+              className="flex items-center justify-between px-4 py-3.5 w-full text-left transition-colors hover:bg-slate-500/5"
+            >
+              <div className="flex items-center gap-2 text-xs md:text-sm font-bold text-cyan-500">
+                <BookOpen className="w-4.5 h-4.5" />
+                <span>📖 Hướng dẫn cách cài đặt và sử dụng Bookmarklet chi tiết</span>
+              </div>
+              {showBookmarkletGuide ? <ChevronUp className="w-4.5 h-4.5 text-cyan-500" /> : <ChevronDown className="w-4.5 h-4.5 text-cyan-500" />}
+            </button>
+
+            {showBookmarkletGuide && (
+              <div className="px-5 pb-5 pt-2 space-y-4 text-xs md:text-sm border-t border-white/[0.05] leading-relaxed text-slate-300">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-400 font-bold text-xs">1</span>
+                    <h4 className={`font-bold ${textP}`}>Hiện thanh dấu trang trên Trình duyệt</h4>
+                  </div>
+                  <p className={textS}>
+                    Đảm bảo thanh bookmark của trình duyệt (Chrome, CocCoc, Safari, Edge) đang hiển thị. Nếu chưa thấy thanh bookmark, bạn hãy nhấn tổ hợp phím sau để mở nhanh:
+                  </p>
+                  <ul className="list-disc pl-5 space-y-1 text-slate-400">
+                    <li>Trên Windows: Nhấn tổ hợp phím <b>Ctrl + Shift + B</b>.</li>
+                    <li>Trên MacOS: Nhấn tổ hợp phím <b>Cmd + Shift + B</b>.</li>
+                  </ul>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-400 font-bold text-xs">2</span>
+                    <h4 className={`font-bold ${textP}`}>Cài đặt bằng cách kéo-thả</h4>
+                  </div>
+                  <p className={textS}>
+                    Nhấp giữ chuột vào nút màu tím <b>"🚀 Scout Hub Extract"</b> phía trên, kéo rê chuột lên vị trí trống bất kỳ trên thanh Bookmark trình duyệt rồi thả chuột ra. Một dấu trang mới tên "🚀 Scout Hub Extract" sẽ được tạo ra trên thanh công cụ.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-400 font-bold text-xs">3</span>
+                    <h4 className={`font-bold ${textP}`}>Sử dụng để cào nhanh khi duyệt web</h4>
+                  </div>
+                  <p className={textS}>
+                    Mỗi lần bạn duyệt tìm KOLs, hãy làm như sau để lấy thông tin tức khắc:
+                  </p>
+                  <ol className="list-decimal pl-5 space-y-1 text-slate-400">
+                    <li>Vào trang cá nhân (Profile) của KOL đó trên TikTok hoặc Facebook (ví dụ: <code>https://www.tiktok.com/@halinh.official</code>).</li>
+                    <li>Khi trang đã tải xong hoàn toàn, hãy nhấp chuột vào Bookmarklet <b>"🚀 Scout Hub Extract"</b> trên thanh công cụ của bạn.</li>
+                    <li>Ứng dụng sẽ tự động trích xuất thông tin như: Tên hiển thị, Followers, Likes, Bio, Email, Số điện thoại, Link Bio, Ảnh đại diện,... sau đó tự động mở tab ScoutHub và nạp trực tiếp data cào vào bộ Extractor của bạn để lưu lại!</li>
+                  </ol>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
+
+      {/* Premium Sticky Bottom Action Bar */}
+      <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 w-[calc(100%-2.5rem)] max-w-3xl z-40 flex items-center justify-between px-6 py-4 rounded-2xl border backdrop-blur-xl shadow-2xl transition-all duration-300 ${
+        isDark 
+          ? 'bg-slate-950/85 border-white/[0.08] shadow-violet-950/20' 
+          : 'bg-white/95 border-slate-200 shadow-slate-400/20'
+      }`}>
+        <div className="flex flex-col gap-0.5">
+          <span className={`text-xs font-bold uppercase tracking-wider ${textS} flex items-center gap-1.5`}>
+            <span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse"></span>
+            Trạng thái Cấu hình
+          </span>
+          <span className={`text-xs ${textM}`}>Các thay đổi thiết lập hệ thống sẽ chỉ áp dụng sau khi lưu.</span>
+        </div>
+        <button
+          onClick={handleSave}
+          className="px-5 py-2.5 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 active:scale-[0.97] transition-all duration-200 flex items-center gap-2 shadow-lg shadow-violet-500/25"
+        >
+          {keysSaved ? (
+            <>
+              <Check className="w-4 h-4" />
+              <span>Đã lưu thành công!</span>
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-4.5 h-4.5" />
+              <span>Lưu Cấu Hình Hệ Thống</span>
+            </>
+          )}
+        </button>
+      </div>
+
     </div>
   );
 }
+
