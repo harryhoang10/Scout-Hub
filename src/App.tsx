@@ -924,37 +924,57 @@ function doGet(e) {
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-xs">1</span>
-                    <h4 className={`font-bold ${textP}`}>Đăng ký tài khoản RapidAPI</h4>
+                    <h4 className={`font-bold ${textP}`}>Đăng ký tài khoản RapidAPI (Miễn phí)</h4>
                   </div>
                   <p className={textS}>
-                    Truy cập cổng dịch vụ API lớn nhất toàn cầu: <a href="https://rapidapi.com" target="_blank" rel="noreferrer" className="text-emerald-400 hover:text-emerald-300 font-bold hover:underline inline-flex items-center gap-0.5">RapidAPI.com <ExternalLink className="w-3.5 h-3.5 inline" /></a>. Đăng ký một tài khoản nhà phát triển miễn phí thông qua email hoặc liên kết GitHub/Google.
+                    Khi hệ thống báo lỗi hết hạn mức cào (<b>limit quota</b> / 429), bất kỳ thành viên nào trong team cũng có thể tự đăng ký một tài khoản mới bằng cách truy cập: <a href="https://rapidapi.com" target="_blank" rel="noreferrer" className="text-emerald-400 hover:text-emerald-300 font-bold hover:underline inline-flex items-center gap-0.5 font-semibold">RapidAPI.com <ExternalLink className="w-3.5 h-3.5 inline" /></a>. Đăng ký rất nhanh bằng Gmail hoặc tài khoản Google/GitHub.
                   </p>
                 </div>
 
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-xs">2</span>
-                    <h4 className={`font-bold ${textP}`}>Tìm kiếm và Subscribe các Scraper API phù hợp</h4>
+                    <h4 className={`font-bold ${textP}`}>Tìm & Đăng ký gói Scraper hiện tại của hệ thống</h4>
                   </div>
                   <p className={textS}>
-                    Nhập tìm kiếm và đăng ký sử dụng các API cào dữ liệu mạng xã hội trên nền tảng. Các bộ cào được khuyến nghị:
+                    Hệ thống ScoutHub đang sử dụng bộ cào TikTok chuyên nghiệp: <b>TikTok Scraper</b> (API Host: <code>tiktok-scraper7.p.rapidapi.com</code>).
+                  </p>
+                  <p className={textS}>
+                    Hãy làm theo các bước sau để đăng ký:
                   </p>
                   <ul className="list-disc pl-5 space-y-1.5 text-slate-400 mt-1">
-                    <li><b>TikTok Scraper:</b> Tìm kiếm <b>"TikWM TikTok API"</b> hoặc <b>"TikTok Scraper API"</b>. Bấm chọn gói dịch vụ (<b>Pricing</b>) và đăng ký gói <b>Free Tier</b> (thường cung cấp từ 100 đến 500 lượt cào miễn phí mỗi ngày).</li>
-                    <li><b>Facebook Scraper:</b> Tìm kiếm <b>"Facebook Scraper API"</b> hoặc <b>"Facebook Data Scraper"</b>, tiến hành đăng ký gói dùng thử miễn phí tương ứng để nhận hạn mức cào của bạn.</li>
+                    <li>Nhập từ khóa <b>"TikTok Scraper"</b> vào thanh tìm kiếm trên RapidAPI (hoặc truy cập trực tiếp link: <a href="https://rapidapi.com/social-api-t/api/tiktok-scraper7" target="_blank" rel="noreferrer" className="text-emerald-400 hover:underline">tiktok-scraper7 API</a>).</li>
+                    <li>Bấm vào tab <b>Pricing</b> (Bảng giá).</li>
+                    <li>Tìm gói <b>BASIC / FREE</b> (Thường có giá <b>$0/tháng</b>, hỗ trợ cào miễn phí hàng trăm lượt mỗi ngày) và nhấp chọn <b>Subscribe</b>.</li>
                   </ul>
                 </div>
 
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-xs">3</span>
-                    <h4 className={`font-bold ${textP}`}>Lấy Header Parameter X-RapidAPI-Key</h4>
+                    <h4 className={`font-bold ${textP}`}>Lấy khóa X-RapidAPI-Key của bạn</h4>
                   </div>
                   <p className={textS}>
-                    Sau khi Subscribe, bạn hãy chuyển sang tab <b>Endpoints</b> của API đó. Tại khung điều khiển code ở cột bên phải, cuộn xuống phần <b>Header Parameters</b>.
+                    Sau khi Subscribe thành công, hãy nhấn vào tab <b>Endpoints</b> (Điểm cuối).
                   </p>
                   <p className={textS}>
-                    Tìm kiếm tham số có tên <code>X-RapidAPI-Key</code>. Sao chép chuỗi mã hóa dài (khoảng 50 ký tự) bên cạnh và dán trực tiếp vào ô cấu hình phía trên.
+                    Tại khung giao diện thử nghiệm API, hãy nhìn sang cột bên phải (hoặc cuộn xuống) phần <b>Header Parameters</b>.
+                  </p>
+                  <p className={textS}>
+                    Tìm dòng chứa tham số <code>X-RapidAPI-Key</code> và sao chép chuỗi mã hóa dài (gồm khoảng 50 ký tự chữ và số).
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-xs">4</span>
+                    <h4 className={`font-bold ${textP}`}>Dán vào ScoutHub để tiếp tục cào ngay lập tức</h4>
+                  </div>
+                  <p className={textS}>
+                    Dán key vừa copy vào ô nhập <b>RapidAPI Key Pool</b> ở phía trên. Nếu trong ô đã có sẵn các key khác, bạn chỉ cần nhấn <b>Enter xuống dòng</b> và dán key mới này vào (mỗi key nằm trên một dòng riêng biệt).
+                  </p>
+                  <p className={textS}>
+                    Sau đó cuộn xuống cuối trang nhấp chọn <b>Lưu Cấu Hình Hệ Thống</b>. ScoutHub sẽ lập tức kích hoạt key mới và xoay vòng cào tiếp tục mà không cần khởi động lại máy chủ!
                   </p>
                 </div>
 
@@ -963,8 +983,8 @@ function doGet(e) {
                 }`}>
                   <Sparkles className="w-5 h-5 flex-shrink-0 mt-0.5 text-indigo-500" />
                   <div>
-                    <span className="font-bold block mb-0.5">🔥 Bí quyết Vượt rào giới hạn cào miễn phí (Bypass Free Rate Limits):</span>
-                    Các nhà phát triển API trên RapidAPI giới hạn số lượt cào miễn phí hàng ngày trên một tài khoản. Để tăng hiệu suất làm việc của IM team lên gấp 10 lần mà hoàn toàn không mất chi phí, bạn chỉ cần tạo 2 - 3 tài khoản RapidAPI phụ (hoặc nhờ các thành viên trong team tạo hộ), lấy các Key tương ứng và dán chúng vào ô <b>RapidAPI Key Pool</b> (mỗi key ở trên một dòng riêng biệt). Hệ thống sẽ tự động điều phối xoay vòng thông minh và đảm bảo công việc diễn ra thông suốt!
+                    <span className="font-bold block mb-0.5">💡 Mẹo dự phòng thông minh cho cả Team:</span>
+                    Nhờ cơ chế <b>Xoay vòng Round-Robin & Cooldown thông minh</b> của ScoutHub, bạn có thể xin Key của nhiều thành viên trong team và dán chung vào ô nhập. Hệ thống sẽ tự động sử dụng lần lượt. Nếu một key bị hết hạn mức (quota limit), hệ thống tự động làm mát key đó và chuyển đổi sang key tiếp theo ngay lập tức để công việc cào không bao giờ bị gián đoạn!
                   </div>
                 </div>
               </div>

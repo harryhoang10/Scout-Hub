@@ -399,7 +399,7 @@ export function ProfileDrawer({
                 <div className={`rounded-xl p-3 text-center ${cardBg}`}>
                   <div className={`text-[10px] uppercase tracking-wider font-semibold ${textSecondary}`}>Engagement</div>
                   <div className="text-lg font-extrabold mt-1 text-amber-400">
-                    {profile.platform === 'TikTok' && profile.averageEngagement ? profile.averageEngagement.toFixed(1) + '%' : '-'}
+                    {profile.platform === 'TikTok' && profile.averageEngagement ? formatFollowers(profile.averageEngagement) : '-'}
                   </div>
                 </div>
               </div>

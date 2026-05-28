@@ -34,9 +34,9 @@ export function KPIDashboardModal({ isOpen, onClose, data, theme }: KPIDashboard
     if (hasEmail) score += 15;
 
     if (profile.averageEngagement && profile.averageEngagement > 0) {
-      const engPercent = profile.averageEngagement;
-      if (engPercent >= 5) score += 20;
-      else if (engPercent >= 2.5) score += 10;
+      const engVal = profile.averageEngagement;
+      if (engVal >= 1000) score += 20;
+      else if (engVal >= 300) score += 10;
       else score -= 5;
     } else {
       score -= 5;

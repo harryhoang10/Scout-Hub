@@ -166,16 +166,16 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
 
     // 2. Engagement & Performance (Max +20)
     if (profile.averageEngagement && profile.averageEngagement > 0) {
-      const engPercent = profile.averageEngagement;
-      if (engPercent >= 5) {
+      const engVal = profile.averageEngagement;
+      if (engVal >= 1000) {
         score += 20;
-        positives.push(`Tương tác cực cao: ${engPercent.toFixed(1)}% (+20)`);
-      } else if (engPercent >= 2.5) {
+        positives.push(`Tương tác cực cao: ${formatFollowers(engVal)} (+20)`);
+      } else if (engVal >= 300) {
         score += 10;
-        positives.push(`Tương tác tốt: ${engPercent.toFixed(1)}% (+10)`);
+        positives.push(`Tương tác tốt: ${formatFollowers(engVal)} (+10)`);
       } else {
         score -= 5;
-        negatives.push(`Tương tác thấp: ${engPercent.toFixed(1)}% (-5)`);
+        negatives.push(`Tương tác thấp: ${formatFollowers(engVal)} (-5)`);
       }
     } else {
       score -= 5;
@@ -1603,7 +1603,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
                       {row.platform === 'TikTok' && row.averageView ? formatNum(row.averageView) : '-'}
                     </td>
                     <td className={`px-3 py-3 text-right text-xs font-medium ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>
-                      {row.platform === 'TikTok' && row.averageEngagement ? row.averageEngagement.toFixed(1) + '%' : '-'}
+                      {row.platform === 'TikTok' && row.averageEngagement ? formatFollowers(row.averageEngagement) : '-'}
                     </td>
                     <td className="px-3 py-3 text-center">
                       {renderFitScoreBadge(row)}
