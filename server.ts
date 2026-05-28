@@ -28,9 +28,11 @@ async function getStealthBrowser() {
   }
 
   if (!puppeteerInstance) {
+    const extraPkg = 'puppeteer-extra';
+    const stealthPkg = 'puppeteer-extra-plugin-stealth';
     const [{ default: puppeteer }, { default: StealthPlugin }] = await Promise.all([
-      import('puppeteer-extra'),
-      import('puppeteer-extra-plugin-stealth'),
+      import(extraPkg),
+      import(stealthPkg),
     ]);
     puppeteer.use(StealthPlugin());
     puppeteerInstance = puppeteer;
@@ -849,7 +851,11 @@ app.use(express.json({ limit: '10mb' }));
         } catch(e) { /* continue */ }
       }
 
-      const html = await (response as Response).text();
+      if (!response) {
+        throw new Error("Không thể kết nối đến Facebook. Vui lòng kiểm tra lại kết nối mạng hoặc thử lại sau.");
+      }
+
+      const html = await response.text();
       const $ = cheerio.load(html);
 
       const title = $('title').text() || '';
@@ -1000,7 +1006,8 @@ app.use(express.json({ limit: '10mb' }));
   });
 
   if (process.env.NODE_ENV !== "production") {
-    import("vite").then(({ createServer: createViteServer }) => {
+    const vitePkg = "vite";
+    import(vitePkg).then(({ createServer: createViteServer }) => {
       createViteServer({
         server: { middlewareMode: true },
         appType: "spa",
