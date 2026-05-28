@@ -22,15 +22,23 @@ function formatPrice(price: number, currency: string = 'VND'): string {
 
 function cleanJsonResponse(text: string): string {
   let cleaned = text.trim();
-  const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  if (jsonMatch) {
-    return jsonMatch[1].trim();
+  
+  // Try to extract contents of a markdown code block, handling cut-off blocks without closing backticks
+  const blockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)(?:```|$)/i);
+  if (blockMatch && blockMatch[1]) {
+    cleaned = blockMatch[1].trim();
   }
+
+  // Remove any individual backticks that might have slipped through
+  cleaned = cleaned.replace(/`/g, '').trim();
+
+  // Find first '{' and last '}' to extract raw JSON object
   const firstBrace = cleaned.indexOf('{');
   const lastBrace = cleaned.lastIndexOf('}');
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
     return cleaned.slice(firstBrace, lastBrace + 1).trim();
   }
+  
   return cleaned;
 }
 

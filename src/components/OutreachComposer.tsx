@@ -412,46 +412,54 @@ export const OutreachComposer: React.FC<OutreachComposerProps> = ({
     const sectionTypeLabel = SECTION_LABELS[selectedTemplate.section] || 'tin nhắn';
     const bioTruncated = (activeProfile.bio || '').slice(0, 300);
 
-    const prompt = `Bạn là một Booker/Outreach Specialist kỳ cựu chuyên đi booking KOLS/Influencers tại Việt Nam. Bạn viết tin nhắn/email tiếp cận cực kỳ tự nhiên, gãy gọn, tinh tế, tỷ lệ phản hồi cao, hoàn toàn KHÔNG CÓ CẢM GIÁC LÀ AI VIẾT.
+    const prompt = `Bạn là một Booker/Outreach Specialist kỳ cựu chuyên nghiệp tại Việt Nam, sở hữu 10 năm kinh nghiệm booking các KOLs/Influencers lớn nhỏ. Bạn có biệt tài viết tin nhắn và email tiếp cận với tỉ lệ phản hồi lên tới 95%, nhờ lối viết cực kỳ tự nhiên, tinh tế, cá nhân hóa sâu sắc, gãy gọn và hoàn toàn KHÔNG CÓ CẢM GIÁC LÀ RÔ-BỐT hay AI viết.
 
-TEMPLATE PHÁT THẢO KHUNG (Sử dụng để tham khảo cấu trúc):
+DƯỚI ĐÂY LÀ KHUNG THÔNG TIN BẮT BUỘC ĐỂ BẠN HOÀN THIỆN EMAIL/TIN NHẮN:
+
+1. TEMPLATE BẢN THẢO KHUNG (Sử dụng để tham khảo cấu trúc đoạn và luồng thông tin):
 """
 ${selectedTemplate.body}
 """
 
-THÔNG TIN DỰ ÁN CẦN THỜI THƯỢNG:
-- Brand/Nhãn hàng: ${activeProject?.brand || '(Chưa xác định)'}
-- Tên dự án/Campaign: ${activeProject?.name || '(Chưa xác định)'}
-- SOW (Phạm vi công việc): ${activeProject?.sow || '(Chưa xác định)'}
-- Timeline/Deadline: ${activeProject?.deadline || '(Chưa xác định)'}
+2. THÔNG TIN CHI TIẾT DỰ ÁN (BẮT BUỘC phải lồng ghép đầy đủ, mượt mà vào nội dung):
+- Nhãn hàng/Brand: ${activeProject?.brand || '(Chưa xác định - hãy tự viết tự nhiên theo tên dự án)'}
+- Chiến dịch/Campaign: ${activeProject?.name || '(Chưa xác định)'}
+- Phạm vi công việc (SOW): ${activeProject?.sow || '(Chưa xác định)'}
+- Mốc thời gian (Timeline/Deadline): ${activeProject?.deadline || '(Chưa xác định)'}
 - Ghi chú chiến dịch: ${activeProject?.notes || '(Không có)'}
 
-${activeProject?.conversationSamples && activeProject.conversationSamples.length > 0 ? `VĂN PHONG MẪU CỦA BOOKER (AI bắt chước chính xác phong cách xưng hô, emoji, cấu trúc câu và độ dài từ các mẫu thực tế này):
-${activeProject.conversationSamples.map((sample, idx) => `--- MẪU #${idx + 1} ---\n${sample}`).join('\n\n')}` : `VĂN PHONG MẪU CỦA BOOKER (Hãy bắt chước 100% đại từ xưng hô, emoji, cấu trúc câu và sự ngắn gọn từ tin nhắn cũ này):
-"""
-${activeProject?.conversationContext || 'Tự nhiên, lịch sự, thân thiện, dùng xưng hô "mình - bạn" hoặc xưng tên KOL nếu phù hợp.'}
-"""`}
+3. VĂN PHONG ĐÀO TẠO MẪU (Bắt chước 100% cách xưng hô, đại từ, thói quen dùng emoji, độ dài câu từ các mẫu Booker thực tế này):
+${activeProject?.conversationSamples && activeProject.conversationSamples.length > 0 ? 
+  activeProject.conversationSamples.map((sample, idx) => `--- MẪU THỰC TẾ LẦN LƯỢT #${idx + 1} ---\n${sample}`).join('\n\n') : 
+  `"""
+  ${activeProject?.conversationContext || 'Gần gũi, tôn trọng, dùng xưng hô "mình - bạn" hoặc xưng "em - chị" tùy độ tuổi của KOL.'}
+  """`}
 
-${activeProfile.outreachHistory && activeProfile.outreachHistory.length > 0 ? `LỊCH SỬ TIN NHẮN ĐÃ GỬI TRƯỚC ĐÓ CHO KOL NÀY (Hãy viết tin nhắn follow-up tự nhiên, tuyệt đối KHÔNG lặp lại nguyên văn nội dung cũ, chỉ khéo léo gợi nhớ hoặc hỏi thăm nhẹ nhàng):
-${activeProfile.outreachHistory.map((h, i) => `--- TIN NHẮN GỬI LẦN ${i + 1} (${h.sentAt.split('T')[0]}) ---\nSubject: ${h.subject}\nBody: ${h.body}`).join('\n\n')}` : ''}
+${activeProfile.outreachHistory && activeProfile.outreachHistory.length > 0 ? `4. LỊCH SỬ TIẾP CẬN TRƯỚC ĐÓ (KOL này đã được nhắn tin trước đó. Hãy viết tin nhắn tiếp nối (Follow-up) khéo léo, hỏi thăm tự nhiên, TUYỆT ĐỐI không lặp lại nội dung đã gửi bên dưới):
+${activeProfile.outreachHistory.map((h, i) => `--- LẦN ${i + 1} (${h.sentAt.split('T')[0]}) ---\nTiêu đề: ${h.subject}\nNội dung: ${h.body}`).join('\n\n')}` : ''}
 
-THÔNG TIN ĐỐI TƯỢNG TIẾP CẬN (KOL/INFLUENCER):
-- Tên/Nickname: ${activeProfile.nickname || '(Không rõ)'}
-- Platform hoạt động: ${activeProfile.platform || 'TikTok'}
-- Số lượng người theo dõi (Followers): ${formatFollowers(activeProfile.followers)}
-- Chủ đề/Niche chính: ${activeProfile.profileNiche || '(Chưa phân loại)'}
-- Giới thiệu bản thân (Bio): ${bioTruncated || '(Không có)'}
-- Đường dẫn trang cá nhân (URL): ${activeProfile.url || ''}
+5. THÔNG TIN KHÁCH THỂ (KOL/INFLUENCER CẦN TIẾP CẬN):
+- Tên hiển thị/Nickname: ${activeProfile.nickname || '(Không rõ)'}
+- Nền tảng (Platform): ${activeProfile.platform || 'TikTok'}
+- Số người theo dõi: ${formatFollowers(activeProfile.followers)}
+- Lĩnh vực/Niche chính: ${activeProfile.profileNiche || '(Chưa phân loại)'}
+- Tiểu sử (Bio): ${bioTruncated || '(Không có)'}
+- Trang cá nhân: ${activeProfile.url || ''}
 
-QUY TẮC VIẾT OUTREACH ĐỈNH CAO:
-1. KHÔNG DÙNG CÁC CỤM TỪ RẬP KHUÔN CỦA AI: Tuyệt đối tránh "Hy vọng bạn có một ngày tốt lành", "Tôi vô cùng ấn tượng với kênh của bạn", "Tôi viết thư này để", "Kính gửi", "Hân hạnh được liên hệ", v.v. Hãy mở đầu thẳng thắn, tự nhiên như hai người trong ngành nói chuyện với nhau.
-2. CÁ NHÂN HÓA SÂU SẮC: Nhìn vào Bio và Niche của KOL để đưa ra 1 lý do cực kỳ hợp lý vì sao bạn muốn book bạn này (ví dụ: "Thấy bạn hay review skincare rất chân thực...", "Mình xem clip phối đồ của bạn rất có gu...").
-3. BẮT CHƯỚC VĂN PHONG ĐÃ FEED: Nếu mục VĂN PHONG MẪU CỦA BOOKER có nội dung, hãy học hỏi đại xưng hô (mình-bạn, ad-bạn, em-chị,...), cách ngắt dòng, cách chèn emoji và sự ngắn gọn từ đó.
-4. THÔNG TIN RÕ RÀNG: Lồng ghép khéo léo thông tin Brand, Dự án, SOW và Deadline vào nội dung một cách tự nhiên, không gượng ép.
+BỘ QUY TẮC VIẾT SẮC BÉN (BẮT BUỘC TUÂN THỦ):
+1. TUYỆT ĐỐI KHÔNG DÙNG placeholder thô hoặc ký tự đại diện dạng đóng mở ngoặc vuông (ví dụ: KHÔNG ĐƯỢC xuất hiện "[Tên KOL]", "[Tên Nhãn Hàng]", "[Deadline]", "[SOW]"). Tất cả thông tin phải được bạn phân tích và điền khớp hoàn chỉnh vào mạch văn. Nếu một thông tin dự án nào đó chưa có, hãy diễn đạt mượt mà tránh tạo cảm giác trống rỗng.
+2. KHÔNG DÙNG CÁC TỪ AI SÁO RỖNG: Cấm tiệt "Hy vọng thư này tìm thấy bạn khỏe mạnh", "Tôi vô cùng ấn tượng với những video của bạn", "Chúng tôi muốn hợp tác", "Tôi viết thư này để", "Kính gửi", "Hân hạnh". Hãy bắt đầu thẳng thắn, thân mật như người trong ngành chia sẻ cơ hội tốt.
+3. CÁ NHÂN HÓA ĐẮT GIÁ: Trích dẫn khéo léo lĩnh vực hoặc bio của KOL để tạo lý do tự nhiên vì sao Brand lại chọn mặt gửi vàng ở họ (ví dụ: "Thấy bạn hay chia sẻ tips nấu ăn siêu cuốn...", "Kênh skincare của bạn có gu review rất thật...").
+4. ĐẢM BẢO ĐỦ CONTEXT & MẠCH LẠC: Nội dung không được chắp vá lỏm chõm. Phải có kết cấu rõ ràng:
+   - Chào hỏi thân thiện (đúng xưng hô đã đào tạo).
+   - Lý do tiếp cận cá nhân hóa.
+   - Giới thiệu dự án, nhãn hàng, sản phẩm và quyền lợi.
+   - SOW và timeline/deadline cụ thể để KOL dễ cân đối.
+   - Lời kêu gọi phản hồi nhẹ nhàng (Call to action) kèm thông tin ký tên Booker.
 5. CHI TIẾT ĐỊNH DẠNG:
-   - Nếu là Email (section: email): Phải tạo tiêu đề email cuốn hút, bắt đầu bằng "Subject: [Tiêu đề email]".
-   - Nếu là DM (TikTok, Facebook, Instagram): Viết siêu ngắn gọn, cuốn hút, thân thiện, thích hợp để đọc trên điện thoại.
-6. Ngôn ngữ: Tiếng Việt. Chỉ xuất ra nội dung tin nhắn/email hoàn chỉnh, tuyệt đối không thêm lời giới thiệu, lời giải thích hay ký hiệu Markdown thừa.`;
+   - Nếu là Email (section: email): Phải tạo tiêu đề email cuốn hút, mở đầu bằng dòng chữ "Subject: [Tiêu đề email]". Viết đầy đủ, trang trọng lịch sự nhưng vẫn trẻ trung, ấm áp.
+   - Nếu là DM (TikTok, Facebook, Instagram): Viết ngắn gọn, lôi cuốn, chia dòng thông thoáng dễ đọc trên thiết bị di động, nhưng vẫn đầy đủ thông tin cốt lõi của chiến dịch.
+6. Ngôn ngữ: Tiếng Việt. Chỉ xuất ra nội dung email/tin nhắn thành phẩm cuối cùng. Không viết thêm bất kỳ lời dẫn dắt, giải thích hay đóng mở thẻ markdown nào.`;
 
     try {
       const response = await fetch(`${aiBaseUrl}chat/completions`, {
@@ -529,42 +537,54 @@ QUY TẮC VIẾT OUTREACH ĐỈNH CAO:
       const sectionTypeLabel = SECTION_LABELS[selectedTemplate.section] || 'tin nhắn';
       const bioTruncated = (p.bio || '').slice(0, 300);
 
-      const prompt = `Bạn là một Booker/Outreach Specialist kỳ cựu chuyên đi booking KOLS/Influencers tại Việt Nam. Bạn viết tin nhắn/email tiếp cận cực kỳ tự nhiên, gãy gọn, tinh tế, tỷ lệ phản hồi cao, hoàn toàn KHÔNG CÓ CẢM GIÁC LÀ AI VIẾT.
+      const prompt = `Bạn là một Booker/Outreach Specialist kỳ cựu chuyên nghiệp tại Việt Nam, sở hữu 10 năm kinh nghiệm booking các KOLs/Influencers lớn nhỏ. Bạn có biệt tài viết tin nhắn và email tiếp cận với tỉ lệ phản hồi lên tới 95%, nhờ lối viết cực kỳ tự nhiên, tinh tế, cá nhân hóa sâu sắc, gãy gọn và hoàn toàn KHÔNG CÓ CẢM GIÁC LÀ RÔ-BỐT hay AI viết.
 
-TEMPLATE PHÁT THẢO KHUNG (Sử dụng để tham khảo cấu trúc):
+DƯỚI ĐÂY LÀ KHUNG THÔNG TIN BẮT BUỘC ĐỂ BẠN HOÀN THIỆN EMAIL/TIN NHẮN:
+
+1. TEMPLATE BẢN THẢO KHUNG (Sử dụng để tham khảo cấu trúc đoạn và luồng thông tin):
 """
 ${selectedTemplate.body}
 """
 
-THÔNG TIN DỰ ÁN CẦN THỜI THƯỢNG:
-- Brand/Nhãn hàng: ${activeProject?.brand || '(Chưa xác định)'}
-- Tên dự án/Campaign: ${activeProject?.name || '(Chưa xác định)'}
-- SOW (Phạm vi công việc): ${activeProject?.sow || '(Chưa xác định)'}
-- Timeline/Deadline: ${activeProject?.deadline || '(Chưa xác định)'}
+2. THÔNG TIN CHI TIẾT DỰ ÁN (BẮT BUỘC phải lồng ghép đầy đủ, mượt mà vào nội dung):
+- Nhãn hàng/Brand: ${activeProject?.brand || '(Chưa xác định - hãy tự viết tự nhiên theo tên dự án)'}
+- Chiến dịch/Campaign: ${activeProject?.name || '(Chưa xác định)'}
+- Phạm vi công việc (SOW): ${activeProject?.sow || '(Chưa xác định)'}
+- Mốc thời gian (Timeline/Deadline): ${activeProject?.deadline || '(Chưa xác định)'}
 - Ghi chú chiến dịch: ${activeProject?.notes || '(Không có)'}
 
-VĂN PHONG MẪU CỦA BOOKER (Hãy bắt chước 100% đại từ xưng hô, emoji, cấu trúc câu và sự ngắn gọn từ tin nhắn cũ này):
-"""
-${activeProject?.conversationContext || 'Tự nhiên, lịch sự, thân thiện, dùng xưng hô "mình - bạn" hoặc xưng tên KOL nếu phù hợp.'}
-"""
+3. VĂN PHONG ĐÀO TẠO MẪU (Bắt chước 100% cách xưng hô, đại từ, thói quen dùng emoji, độ dài câu từ các mẫu Booker thực tế này):
+${activeProject?.conversationSamples && activeProject.conversationSamples.length > 0 ? 
+  activeProject.conversationSamples.map((sample, idx) => `--- MẪU THỰC TẾ LẦN LƯỢT #${idx + 1} ---\n${sample}`).join('\n\n') : 
+  `"""
+  ${activeProject?.conversationContext || 'Gần gũi, tôn trọng, dùng xưng hô "mình - bạn" hoặc xưng "em - chị" tùy độ tuổi của KOL.'}
+  """`}
 
-THÔNG TIN ĐỐI TƯỢNG TIẾP CẬN (KOL/INFLUENCER):
-- Tên/Nickname: ${p.nickname || '(Không rõ)'}
-- Platform hoạt động: ${p.platform || 'TikTok'}
-- Số lượng người theo dõi (Followers): ${formatFollowers(p.followers)}
-- Chủ đề/Niche chính: ${p.profileNiche || '(Chưa phân loại)'}
-- Giới thiệu bản thân (Bio): ${bioTruncated || '(Không có)'}
-- Đường dẫn trang cá nhân (URL): ${p.url || ''}
+${p.outreachHistory && p.outreachHistory.length > 0 ? `4. LỊCH SỬ TIẾP CẬN TRƯỚC ĐÓ (KOL này đã được nhắn tin trước đó. Hãy viết tin nhắn tiếp nối (Follow-up) khéo léo, hỏi thăm tự nhiên, TUYỆT ĐỐI không lặp lại nội dung đã gửi bên dưới):
+${p.outreachHistory.map((h, i) => `--- LẦN ${i + 1} (${h.sentAt.split('T')[0]}) ---\nTiêu đề: ${h.subject}\nNội dung: ${h.body}`).join('\n\n')}` : ''}
 
-QUY TẮC VIẾT OUTREACH ĐỈNH CAO:
-1. KHÔNG DÙNG CÁC CỤM TỪ RẬP KHUÔN CỦA AI: Tuyệt đối tránh "Hy vọng bạn có một ngày tốt lành", "Tôi vô cùng ấn tượng với kênh của bạn", "Tôi viết thư này để", "Kính gửi", "Hân hạnh được liên hệ", v.v. Hãy mở đầu thẳng thắn, tự nhiên như hai người trong ngành nói chuyện với nhau.
-2. CÁ NHÂN HÓA SÂU SẮC: Nhìn vào Bio và Niche của KOL để đưa ra 1 lý do cực kỳ hợp lý vì sao bạn muốn book bạn này (ví dụ: "Thấy bạn hay review skincare rất chân thực...", "Mình xem clip phối đồ của bạn rất có gu...").
-3. BẮT CHƯỚC VĂN PHONG ĐÃ FEED: Nếu mục VĂN PHONG MẪU CỦA BOOKER có nội dung, hãy học hỏi đại xưng hô (mình-bạn, ad-bạn, em-chị,...), cách ngắt dòng, cách chèn emoji và sự ngắn gọn từ đó.
-4. THÔNG TIN RÕ RÀNG: Lồng ghép khéo léo thông tin Brand, Dự án, SOW và Deadline vào nội dung một cách tự nhiên, không gượng ép.
+5. THÔNG TIN KHÁCH THỂ (KOL/INFLUENCER CẦN TIẾP CẬN):
+- Tên hiển thị/Nickname: ${p.nickname || '(Không rõ)'}
+- Nền tảng (Platform): ${p.platform || 'TikTok'}
+- Số người theo dõi: ${formatFollowers(p.followers)}
+- Lĩnh vực/Niche chính: ${p.profileNiche || '(Chưa phân loại)'}
+- Tiểu sử (Bio): ${bioTruncated || '(Không có)'}
+- Trang cá nhân: ${p.url || ''}
+
+BỘ QUY TẮC VIẾT SẮC BÉN (BẮT BUỘC TUÂN THỦ):
+1. TUYỆT ĐỐI KHÔNG DÙNG placeholder thô hoặc ký tự đại diện dạng đóng mở ngoặc vuông (ví dụ: KHÔNG ĐƯỢC xuất hiện "[Tên KOL]", "[Tên Nhãn Hàng]", "[Deadline]", "[SOW]"). Tất cả thông tin phải được bạn phân tích và điền khớp hoàn chỉnh vào mạch văn. Nếu một thông tin dự án nào đó chưa có, hãy diễn đạt mượt mà tránh tạo cảm giác trống rỗng.
+2. KHÔNG DÙNG CÁC TỪ AI SÁO RỖNG: Cấm tiệt "Hy vọng thư này tìm thấy bạn khỏe mạnh", "Tôi vô cùng ấn tượng với những video của bạn", "Chúng tôi muốn hợp tác", "Tôi viết thư này để", "Kính gửi", "Hân hạnh". Hãy bắt đầu thẳng thắn, thân mật như người trong ngành chia sẻ cơ hội tốt.
+3. CÁ NHÂN HÓA ĐẮT GIÁ: Trích dẫn khéo léo lĩnh vực hoặc bio của KOL để tạo lý do tự nhiên vì sao Brand lại chọn mặt gửi vàng ở họ (ví dụ: "Thấy bạn hay chia sẻ tips nấu ăn siêu cuốn...", "Kênh skincare của bạn có gu review rất thật...").
+4. ĐẢM BẢO ĐỦ CONTEXT & MẠCH LẠC: Nội dung không được chắp vá lỏm chõm. Phải có kết cấu rõ ràng:
+   - Chào hỏi thân thiện (đúng xưng hô đã đào tạo).
+   - Lý do tiếp cận cá nhân hóa.
+   - Giới thiệu dự án, nhãn hàng, sản phẩm và quyền lợi.
+   - SOW và timeline/deadline cụ thể để KOL dễ cân đối.
+   - Lời kêu gọi phản hồi nhẹ nhàng (Call to action) kèm thông tin ký tên Booker.
 5. CHI TIẾT ĐỊNH DẠNG:
-   - Nếu là Email (section: email): Phải tạo tiêu đề email cuốn hút, bắt đầu bằng "Subject: [Tiêu đề email]".
-   - Nếu là DM (TikTok, Facebook, Instagram): Viết siêu ngắn gọn, cuốn hút, thân thiện, thích hợp để đọc trên điện thoại.
-6. Ngôn ngữ: Tiếng Việt. Chỉ xuất ra nội dung tin nhắn/email hoàn chỉnh, tuyệt đối không thêm lời giới thiệu, lời giải thích hay ký hiệu Markdown thừa.`;
+   - Nếu là Email (section: email): Phải tạo tiêu đề email cuốn hút, mở đầu bằng dòng chữ "Subject: [Tiêu đề email]". Viết đầy đủ, trang trọng lịch sự nhưng vẫn trẻ trung, ấm áp.
+   - Nếu là DM (TikTok, Facebook, Instagram): Viết ngắn gọn, lôi cuốn, chia dòng thông thoáng dễ đọc trên thiết bị di động, nhưng vẫn đầy đủ thông tin cốt lõi của chiến dịch.
+6. Ngôn ngữ: Tiếng Việt. Chỉ xuất ra nội dung email/tin nhắn thành phẩm cuối cùng. Không viết thêm bất kỳ lời dẫn dắt, giải thích hay đóng mở thẻ markdown nào.`;
 
       try {
         const response = await fetch(`${aiBaseUrl}chat/completions`, {
