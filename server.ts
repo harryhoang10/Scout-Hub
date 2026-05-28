@@ -1015,8 +1015,10 @@ app.use(express.json({ limit: '10mb' }));
         app.use(vite.middlewares);
       });
     });
-  } else {
-    // Serve static files from the React app
+  } else if (!isServerlessRuntime) {
+    // Serve static files from the React app (self-hosted production only).
+    // On Vercel/Netlify, the CDN handles static assets; the serverless
+    // function must NOT register filesystem-dependent middleware.
     app.use(express.static(path.join(currentDirname, "dist")));
     
     // The "catchall" handler: for any request that doesn't
