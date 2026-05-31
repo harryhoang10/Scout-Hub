@@ -182,3 +182,16 @@ input[type="checkbox"] {
   background: var(--bg-secondary);
   border: 1px solid var(--border-secondary);
 }
+
+/* Toast Animations */
+@keyframes scout-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+

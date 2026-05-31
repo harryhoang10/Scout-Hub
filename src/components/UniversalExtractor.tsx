@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import { upsertToSheet } from '../lib/api';
 import { normalizeContact } from '../lib/contactParser';
 import { GoogleGenAI } from "@google/genai";
+import { showToast } from './ui/Toast';
 
 
 interface UniversalExtractorProps {
@@ -598,7 +599,7 @@ Bio để phân tích:
         });
         addLinks(urls);
       } catch (error) {
-        alert('Lỗi đọc file.');
+        showToast('Lỗi đọc file.', 'error');
       }
     };
     reader.readAsBinaryString(file);
@@ -771,7 +772,7 @@ Bio để phân tích:
     setIsProcessing(false);
 
     if (shouldPause && pauseReason) {
-      alert(pauseReason);
+      showToast(pauseReason, 'error');
     }
   };
 

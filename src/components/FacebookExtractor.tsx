@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx';
 import { ProfileData, RestoredData } from '../types';
 import { GoogleGenAI, Type } from "@google/genai";
 import { normalizeContact } from '../lib/contactParser';
+import { showToast } from './ui/Toast';
 
 interface FacebookExtractorProps {
   onSaveToRestored: (data: RestoredData[]) => void;
@@ -69,7 +70,7 @@ export function FacebookExtractor({ onSaveToRestored }: FacebookExtractorProps) 
         });
       } catch (error) {
         console.error("Error parsing file:", error);
-        alert("Lỗi khi đọc file. Vui lòng đảm bảo file là định dạng Excel hoặc CSV hợp lệ.");
+        showToast("Lỗi khi đọc file. Vui lòng đảm bảo file là định dạng Excel hoặc CSV hợp lệ.", "error");
       }
     };
     reader.readAsBinaryString(file);
@@ -126,8 +127,9 @@ URL: """${row.url}"""
 Followers (đã trích xuất sơ bộ): """${result.followers || ''}"""
             `;
 
+            const activeModel = localStorage.getItem('scout_hub_ai_model') || 'gemini-2.5-flash';
             const aiResponse = await ai.models.generateContent({
-              model: "gemini-3-flash-preview",
+              model: activeModel,
               contents: prompt,
               config: {
                 responseMimeType: "application/json",
@@ -270,7 +272,7 @@ Followers (đã trích xuất sơ bộ): """${result.followers || ''}"""
   const handleSave = () => {
     const successRows = rows.filter(r => r.status === 'success');
     if (successRows.length === 0) {
-      alert("Không có dữ liệu thành công nào để lưu trữ.");
+      showToast("Không có dữ liệu thành công nào để lưu trữ.", "error");
       return;
     }
 
@@ -295,7 +297,7 @@ Followers (đã trích xuất sơ bộ): """${result.followers || ''}"""
     }));
 
     onSaveToRestored(restoredData);
-    alert(`Đã lưu ${restoredData.length} hồ sơ vào trang Lưu trữ thành công!`);
+    showToast(`Đã lưu ${restoredData.length} hồ sơ vào trang Lưu trữ thành công!`, "success");
     
     // Mark as saved so user doesn't save again
     setRows(prev => prev.filter(r => r.status !== 'success'));

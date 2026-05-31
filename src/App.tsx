@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { UniversalExtractor } from './components/UniversalExtractor';
 import { ScoutCRM } from './components/ScoutCRM';
-import { RestoredData } from './types';
-import { Radar, Database, Menu, X, Sun, Moon, Settings, Briefcase, Sparkles, Key, Layers, BookOpen, ExternalLink, Check, Copy, HelpCircle, Cpu, AlertTriangle, ShieldCheck, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
+import CampaignManager from './components/execution/CampaignManager';
+import ExecutionKanban from './components/execution/ExecutionKanban';
+import { RestoredData, Campaign, ExecutionProfile, WorkflowStatus, OutreachStatus, ConnectingStatus } from './types';
+import { Radar, Database, Menu, X, Sun, Moon, Settings, Briefcase, Sparkles, Key, Layers, BookOpen, ExternalLink, Check, Copy, HelpCircle, Cpu, AlertTriangle, ShieldCheck, ChevronDown, ChevronUp, RefreshCw, Rocket } from 'lucide-react';
 import { fetchFromSheet } from './lib/api';
 import { hydrateRestoredProfile, mergeProfileBatch } from './lib/profileChangeDetection';
+import { ToastContainer } from './components/ui/Toast';
 
 type ExtractorPrefillRequest = {
   id: string;
@@ -31,7 +34,7 @@ function parseExtractorIntakeUrls(search: string) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'extractor' | 'crm' | 'settings'>('extractor');
+  const [activeTab, setActiveTab] = useState<'extractor' | 'crm' | 'execution' | 'settings'>('extractor');
   const [restoredData, setRestoredData] = useState<RestoredData[]>([]);
   const [hasLoadedRestoredData, setHasLoadedRestoredData] = useState(false);
   const [extractorPrefillRequest, setExtractorPrefillRequest] = useState<ExtractorPrefillRequest | null>(null);
@@ -48,6 +51,151 @@ export default function App() {
   const [projectName, setProjectName] = useState(() => {
     return localStorage.getItem('scout_hub_active_project') || '';
   });
+
+  // Campaign State and Persistence
+  const [campaigns, setCampaigns] = useState<Campaign[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scout_hub_campaigns');
+      return saved ? JSON.parse(saved) : [];
+    }
+    return [];
+  });
+  const [executionProfiles, setExecutionProfiles] = useState<ExecutionProfile[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scout_hub_execution_profiles');
+      return saved ? JSON.parse(saved) : [];
+    }
+    return [];
+  });
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem('scout_hub_campaigns', JSON.stringify(campaigns));
+  }, [campaigns]);
+
+  useEffect(() => {
+    localStorage.setItem('scout_hub_execution_profiles', JSON.stringify(executionProfiles));
+  }, [executionProfiles]);
+
+  // Sync CRM Campaign tags in restoredData to Execution Profiles automatically
+  useEffect(() => {
+    if (!hasLoadedRestoredData || campaigns.length === 0) return;
+
+    let needsUpdate = false;
+    const updatedExecutionProfiles = [...executionProfiles];
+
+    campaigns.forEach(camp => {
+      // 1. Find all CRM profiles that have this campaign tag in CRM
+      const crmProfilesWithTag = restoredData.filter(p => p.campaign && p.campaign.includes(camp.name));
+      
+      // 2. Ensure they exist in updatedExecutionProfiles
+      crmProfilesWithTag.forEach(crmP => {
+        const epIndex = updatedExecutionProfiles.findIndex(ep => ep.campaignId === camp.id && ep.profileId === crmP.id);
+        if (epIndex === -1) {
+          // Initialize status based on crmP.outreachStatus / workflowStatus
+          let phase: 'connecting' | 'launching' | 'wrapping' = 'connecting';
+          let connectingStatus: ConnectingStatus = 'pending_quote';
+          
+          if (crmP.outreachStatus === 'Confirmed') {
+            phase = 'launching';
+            connectingStatus = 'confirmed';
+          } else if (crmP.outreachStatus === 'Negotiating') {
+            connectingStatus = 'dealing';
+          } else if (crmP.outreachStatus === 'Declined') {
+            connectingStatus = 'cancelled';
+          }
+
+          updatedExecutionProfiles.push({
+            id: `ep_${Math.random().toString(36).substring(7)}`,
+            campaignId: camp.id,
+            profileId: crmP.id,
+            phase,
+            connectingStatus,
+            confirmedSOW: [],
+            totalCost: 0,
+            currency: 'VND',
+            paymentTerm: '',
+            confirmMessageRaw: '',
+            launchingStatus: 'preparing',
+            contractNotes: '',
+            publishedLinks: [],
+            wrappingStatus: 'pending_payment',
+            acceptanceNotes: '',
+            followUpItems: [],
+            notes: '',
+            assignedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
+          needsUpdate = true;
+        } else {
+          // Execution profile already exists! Let's check if CRM status has been updated and sync it back.
+          const ep = updatedExecutionProfiles[epIndex];
+          let changed = false;
+          
+          if (crmP.outreachStatus === 'Confirmed' && ep.phase === 'connecting' && ep.connectingStatus !== 'confirmed') {
+            ep.connectingStatus = 'confirmed';
+            ep.phase = 'launching';
+            ep.launchingStatus = 'preparing';
+            changed = true;
+          } else if (crmP.outreachStatus === 'Negotiating' && ep.phase === 'connecting' && ep.connectingStatus !== 'dealing') {
+            ep.connectingStatus = 'dealing';
+            changed = true;
+          } else if (crmP.outreachStatus === 'Declined') {
+            // Set status to cancelled in current phase
+            if (ep.phase === 'connecting' && ep.connectingStatus !== 'cancelled') {
+              ep.connectingStatus = 'cancelled';
+              changed = true;
+            } else if (ep.phase === 'launching' && ep.launchingStatus !== 'cancelled') {
+              ep.launchingStatus = 'cancelled';
+              changed = true;
+            } else if (ep.phase === 'wrapping' && ep.wrappingStatus !== 'cancelled') {
+              ep.wrappingStatus = 'cancelled';
+              changed = true;
+            }
+          } else if (crmP.outreachStatus === 'Sent' && ep.phase === 'connecting' && ep.connectingStatus !== 'pending_quote') {
+            ep.connectingStatus = 'pending_quote';
+            changed = true;
+          }
+          
+          if (changed) {
+            ep.updatedAt = new Date().toISOString();
+            needsUpdate = true;
+          }
+        }
+      });
+
+      // 3. Remove execution profiles whose CRM profile no longer has the campaign tag
+      const currentCampEps = updatedExecutionProfiles.filter(ep => ep.campaignId === camp.id);
+      currentCampEps.forEach(ep => {
+        const crmP = restoredData.find(p => p.id === ep.profileId);
+        if (!crmP || !crmP.campaign || !crmP.campaign.includes(camp.name)) {
+          const idx = updatedExecutionProfiles.findIndex(item => item.id === ep.id);
+          if (idx !== -1) {
+            updatedExecutionProfiles.splice(idx, 1);
+            needsUpdate = true;
+          }
+        }
+      });
+    });
+
+    if (needsUpdate) {
+      setExecutionProfiles(updatedExecutionProfiles);
+    }
+  }, [restoredData, campaigns, hasLoadedRestoredData]);
+
+  // Handler to update CRM profiles directly from Kanban Detail Panel
+  const handleUpdateCRMProfile = (profileId: string, field: keyof RestoredData, value: any) => {
+    setRestoredData(prev => prev.map(p => {
+      if (p.id === profileId) {
+        return {
+          ...p,
+          [field]: value,
+          lastChangedAt: new Date().toISOString()
+        };
+      }
+      return p;
+    }));
+  };
 
   // Persist project name
   useEffect(() => {
@@ -146,10 +294,13 @@ export default function App() {
     setHasLoadedRestoredData(true);
   }, []);
 
-  // Save to localStorage when data changes
+  // Save to localStorage when data changes with 500ms debounce
   useEffect(() => {
     if (!hasLoadedRestoredData) return;
-    localStorage.setItem('scout_hub_data', JSON.stringify(restoredData));
+    const timer = setTimeout(() => {
+      localStorage.setItem('scout_hub_data', JSON.stringify(restoredData));
+    }, 500);
+    return () => clearTimeout(timer);
   }, [hasLoadedRestoredData, restoredData]);
 
   const handleSaveToRestored = (newData: RestoredData[]) => {
@@ -219,6 +370,7 @@ export default function App() {
   const navItems = [
     { id: 'extractor' as const, label: 'Extractor', icon: Radar, desc: 'Trích xuất profile' },
     { id: 'crm' as const, label: 'Scout CRM', icon: Database, desc: `${restoredData.length} profiles` },
+    { id: 'execution' as const, label: 'Execution Hub', icon: Rocket, desc: `${campaigns.length} campaigns` },
     { id: 'settings' as const, label: 'Cài đặt', icon: Settings, desc: 'Webhook & API' },
   ];
 
@@ -302,7 +454,13 @@ export default function App() {
             <div className="pl-10 lg:pl-0">
               <div className="flex items-center gap-3">
                 <h2 className={`text-lg font-semibold ${textPrimary}`}>
-                  {activeTab === 'extractor' ? 'Universal Extractor' : activeTab === 'crm' ? 'Scout CRM' : 'Cài đặt'}
+                  {activeTab === 'extractor' 
+                    ? 'Universal Extractor' 
+                    : activeTab === 'crm' 
+                    ? 'Scout CRM' 
+                    : activeTab === 'execution'
+                    ? 'Execution Hub'
+                    : 'Cài đặt'}
                 </h2>
                 {projectName && (
                   <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium ${
@@ -318,6 +476,8 @@ export default function App() {
                   ? 'Paste link TikTok / Facebook → Auto-extract profile data' 
                   : activeTab === 'crm'
                   ? `Quản lý ${restoredData.length} profiles đã lưu trữ`
+                  : activeTab === 'execution'
+                  ? 'Quản lý chiến dịch và quy trình KOL Execution'
                   : 'Cấu hình Webhook, Google Sheet và các API'
                 }
               </p>
@@ -347,6 +507,167 @@ export default function App() {
               projectName={projectName}
             />
           )}
+          {activeTab === 'execution' && !selectedCampaignId && (
+            <CampaignManager
+              campaigns={campaigns}
+              executionProfiles={executionProfiles}
+              crmProfiles={restoredData}
+              onSelectCampaign={setSelectedCampaignId}
+              onAddCampaign={(newCamp) => {
+                const camp: Campaign = {
+                  ...newCamp,
+                  id: `camp_${Math.random().toString(36).substring(7)}`,
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString()
+                };
+                setCampaigns(prev => [...prev, camp]);
+              }}
+              onUpdateCampaign={(updatedCamp) => {
+                setCampaigns(prev => prev.map(c => c.id === updatedCamp.id ? updatedCamp : c));
+              }}
+              onDeleteCampaign={(campId) => {
+                setCampaigns(prev => prev.filter(c => c.id !== campId));
+                setExecutionProfiles(prev => prev.filter(ep => ep.campaignId !== campId));
+              }}
+              onUpdateCampaignProfiles={(campId, profileIds) => {
+                const camp = campaigns.find(c => c.id === campId);
+                if (!camp) return;
+
+                // 1. Dual-sync CRM campaign tags in restoredData!
+                setRestoredData(prevCRM => prevCRM.map(p => {
+                  const isAssigned = profileIds.includes(p.id);
+                  const hasCRMTag = p.campaign && p.campaign.includes(camp.name);
+                  
+                  if (isAssigned && !hasCRMTag) {
+                    return { ...p, campaign: [...(p.campaign || []), camp.name] };
+                  } else if (!isAssigned && hasCRMTag) {
+                    return { ...p, campaign: (p.campaign || []).filter(cName => cName !== camp.name) };
+                  }
+                  return p;
+                }));
+
+                // 2. Update executionProfiles list
+                setExecutionProfiles(prev => {
+                  const filtered = prev.filter(ep => ep.campaignId !== campId);
+                  const newProfiles = profileIds.map(pId => {
+                    const existing = prev.find(ep => ep.campaignId === campId && ep.profileId === pId);
+                    if (existing) return existing;
+                    return {
+                      id: `ep_${Math.random().toString(36).substring(7)}`,
+                      campaignId: campId,
+                      profileId: pId,
+                      phase: 'connecting' as const,
+                      connectingStatus: 'pending_quote' as const,
+                      confirmedSOW: [],
+                      totalCost: 0,
+                      currency: 'VND',
+                      paymentTerm: '',
+                      confirmMessageRaw: '',
+                      launchingStatus: 'preparing' as const,
+                      contractNotes: '',
+                      publishedLinks: [],
+                      wrappingStatus: 'pending_payment' as const,
+                      acceptanceNotes: '',
+                      followUpItems: [],
+                      notes: '',
+                      assignedAt: new Date().toISOString(),
+                      updatedAt: new Date().toISOString()
+                    };
+                  });
+                  return [...filtered, ...newProfiles];
+                });
+              }}
+              theme={theme}
+            />
+          )}
+          {activeTab === 'execution' && selectedCampaignId && (() => {
+            const selectedCampaign = campaigns.find(c => c.id === selectedCampaignId);
+            if (!selectedCampaign) return null;
+            return (
+              <ExecutionKanban
+                campaign={selectedCampaign}
+                executionProfiles={executionProfiles}
+                crmProfiles={restoredData}
+                onUpdateExecutionProfile={(updatedProfile) => {
+                  setExecutionProfiles(prev => prev.map(ep => ep.id === updatedProfile.id ? updatedProfile : ep));
+
+                  // Map and reconcile status back to CRM (ScoutCRM)
+                  const campaign = campaigns.find(c => c.id === updatedProfile.campaignId);
+                  const brandName = campaign ? campaign.brand : '';
+                  const campaignTag = campaign ? campaign.name : '';
+
+                  const currentStatus = updatedProfile.phase === 'connecting' 
+                    ? updatedProfile.connectingStatus 
+                    : updatedProfile.phase === 'launching' 
+                    ? updatedProfile.launchingStatus 
+                    : updatedProfile.wrappingStatus;
+
+                  const getCRMStatusesFromExecution = (
+                    phase: 'connecting' | 'launching' | 'wrapping',
+                    status: string
+                  ): { workflowStatus: WorkflowStatus; outreachStatus: OutreachStatus } => {
+                    if (phase === 'connecting') {
+                      switch (status) {
+                        case 'pending_quote':
+                          return { workflowStatus: 'Contacted', outreachStatus: 'Sent' };
+                        case 'dealing':
+                          return { workflowStatus: 'Negotiating', outreachStatus: 'Negotiating' };
+                        case 'confirmed':
+                          return { workflowStatus: 'Closed', outreachStatus: 'Confirmed' };
+                        case 'cancelled':
+                          return { workflowStatus: 'Closed', outreachStatus: 'Declined' };
+                        default:
+                          return { workflowStatus: 'Contacted', outreachStatus: 'Sent' };
+                      }
+                    } else if (phase === 'launching') {
+                      switch (status) {
+                        case 'cancelled':
+                          return { workflowStatus: 'Closed', outreachStatus: 'Declined' };
+                        default:
+                          return { workflowStatus: 'Closed', outreachStatus: 'Confirmed' };
+                      }
+                    } else {
+                      // wrapping
+                      switch (status) {
+                        case 'cancelled':
+                          return { workflowStatus: 'Closed', outreachStatus: 'Declined' };
+                        default:
+                          return { workflowStatus: 'Closed', outreachStatus: 'Confirmed' };
+                      }
+                    }
+                  };
+
+                  const { workflowStatus, outreachStatus } = getCRMStatusesFromExecution(updatedProfile.phase, currentStatus);
+
+                  setRestoredData(prevCRM => prevCRM.map(p => {
+                    if (p.id === updatedProfile.profileId) {
+                      let updatedCampaigns = p.campaign || [];
+                      if (campaignTag && currentStatus !== 'cancelled') {
+                        if (!updatedCampaigns.includes(campaignTag)) {
+                          updatedCampaigns = [...updatedCampaigns, campaignTag];
+                        }
+                      } else if (campaignTag && currentStatus === 'cancelled') {
+                        updatedCampaigns = updatedCampaigns.filter(c => c !== campaignTag);
+                      }
+
+                      return {
+                        ...p,
+                        workflowStatus,
+                        outreachStatus,
+                        projectName: brandName || p.projectName,
+                        campaign: updatedCampaigns,
+                        lastChangedAt: new Date().toISOString()
+                      };
+                    }
+                    return p;
+                  }));
+                }}
+                onUpdateCRMProfile={handleUpdateCRMProfile}
+                onBack={() => setSelectedCampaignId(null)}
+                theme={theme}
+              />
+            );
+          })()}
           {activeTab === 'settings' && (
             <SettingsPanel 
               webhookUrl={webhookUrl} 
@@ -356,6 +677,7 @@ export default function App() {
           )}
         </div>
       </main>
+      <ToastContainer />
     </div>
   );
 }
@@ -453,7 +775,7 @@ function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: st
 
   const appsScriptCode = `const COLUMNS = [
   "Ngày lưu trữ", "Platform", "Tên", "ID", "Followers", "Avg View", "Avg Engagement",
-  "SĐT", "Email", "Link Bio", "Link", "Bio", "Avatar", "Profile",
+  "SĐT", "Email", "Zalo", "Link Bio", "Link", "Bio", "Avatar", "Profile",
   "Tier", "Vị trí", "Nhóm", "Campaign", "SOW", "Notes", "Rate History", "Rating", "Workflow",
   "Project Name", "Outreach Status", "Last Quoted At"
 ];
@@ -470,11 +792,18 @@ function doPost(e) {
   var data = JSON.parse(e.postData.contents);
   var action = data.action || 'upsert';
   
+  var existingData = sheet.getDataRange().getValues();
+  var headers = existingData[0] || COLUMNS;
+  
   if (action === 'delete') {
     var linksToDelete = data.links || [];
-    var sheetData = sheet.getDataRange().getValues();
-    for (var i = sheetData.length - 1; i > 0; i--) {
-      var rowLink = sheetData[i][10];
+    var urlIdx = headers.indexOf("Link");
+    if (urlIdx === -1) {
+      return ContentService.createTextOutput(JSON.stringify({ status: 'error', message: 'No Link column' })).setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    for (var i = existingData.length - 1; i > 0; i--) {
+      var rowLink = existingData[i][urlIdx];
       if (linksToDelete.indexOf(rowLink) !== -1) {
         sheet.deleteRow(i + 1);
       }
@@ -483,43 +812,56 @@ function doPost(e) {
   }
   
   var profiles = data.profiles || [];
-  var existingData = sheet.getDataRange().getValues();
   
   profiles.forEach(function(p) {
-    var rowToUpsert = [
-      p.saveDate || new Date().toLocaleDateString('vi-VN'),
-      p.platform || '',
-      p.nickname || '',
-      p.channelId || '',
-      p.followers || '',
-      p.averageView || '',
-      p.averageEngagement || '',
-      p.phone || '',
-      p.email || '',
-      p.bioLink || '',
-      p.url || '',
-      p.bio || '',
-      p.profilePic || '',
-      p.profileType || 'Individual',
-      (p.tier || []).join(', '),
-      (p.location || []).join(', '),
-      (p.group || []).join(', '),
-      (p.campaign || []).join(', '),
-      (p.sow || []).join(', '),
-      JSON.stringify(p.notes || []),
-      JSON.stringify(p.rateHistory || []),
-      p.rating || 0,
-      p.workflowStatus || 'New',
-      p.projectName || '',
-      p.outreachStatus || 'Not Started',
-      p.lastQuotedAt || ''
-    ];
+    // Generate a row matching the current headers in Google Sheets
+    var rowToUpsert = headers.map(function(header) {
+      switch(header) {
+        case "Ngày lưu trữ": return p.saveDate || new Date().toLocaleDateString('vi-VN');
+        case "Platform": return p.platform || '';
+        case "Tên": return p.nickname || '';
+        case "ID": return p.channelId || '';
+        case "Followers": return p.followers || '';
+        case "Avg View": return p.averageView || '';
+        case "Avg Engagement": return p.averageEngagement || '';
+        case "SĐT": return p.phone || '';
+        case "Email": return p.email || '';
+        case "Zalo": 
+          // Automatically construct standard Zalo link if phone exists
+          var digits = (p.phone || '').replace(/\\D/g, '');
+          if (digits.startsWith('84')) {
+            digits = '0' + digits.substring(2);
+          }
+          return digits ? 'https://zalo.me/' + digits : '';
+        case "Link Bio": return p.bioLink || '';
+        case "Link": return p.url || '';
+        case "Bio": return p.bio || '';
+        case "Avatar": return p.profilePic || '';
+        case "Profile": return p.profileType || 'Individual';
+        case "Tier": return (p.tier || []).join(', ');
+        case "Vị trí": return (p.location || []).join(', ');
+        case "Nhóm": return (p.group || []).join(', ');
+        case "Campaign": return (p.campaign || []).join(', ');
+        case "SOW": return (p.sow || []).join(', ');
+        case "Notes": return JSON.stringify(p.notes || []);
+        case "Rate History": return JSON.stringify(p.rateHistory || []);
+        case "Rating": return p.rating || 0;
+        case "Workflow": return p.workflowStatus || 'New';
+        case "Project Name": return p.projectName || '';
+        case "Outreach Status": return p.outreachStatus || 'Not Started';
+        case "Last Quoted At": return p.lastQuotedAt || '';
+        default: return '';
+      }
+    });
     
+    var urlIdx = headers.indexOf("Link");
     var foundIdx = -1;
-    for (var i = 1; i < existingData.length; i++) {
-      if (existingData[i][10] === p.url) {
-        foundIdx = i;
-        break;
+    if (urlIdx !== -1) {
+      for (var i = 1; i < existingData.length; i++) {
+        if (existingData[i][urlIdx] === p.url) {
+          foundIdx = i;
+          break;
+        }
       }
     }
     
@@ -543,43 +885,56 @@ function doGet(e) {
     return ContentService.createTextOutput(JSON.stringify([])).setMimeType(ContentService.MimeType.JSON);
   }
   
+  var headers = data[0];
+  var getIndex = function(name) {
+    return headers.indexOf(name);
+  };
+  
   var rows = [];
   var parseJSON = function(val, def) {
     try { return JSON.parse(val); } catch(err) { return def; }
   };
   
+  var urlIdx = getIndex("Link");
+  
   for (var i = 1; i < data.length; i++) {
     var row = data[i];
-    if (!row[10]) continue;
+    if (urlIdx === -1 || !row[urlIdx]) continue;
+    
+    var getVal = function(name, def) {
+      var idx = getIndex(name);
+      return (idx !== -1 && row[idx] !== undefined) ? row[idx] : (def || '');
+    };
     
     rows.push({
       id: "row_" + i + "_" + new Date().getTime(),
-      saveDate: row[0] || '',
-      platform: row[1] || 'TikTok',
-      nickname: row[2] || '',
-      channelId: row[3] || '',
-      followers: row[4] || '',
-      averageView: Number(row[5]) || 0,
-      averageEngagement: Number(row[6]) || 0,
-      phone: row[7] || '',
-      email: row[8] || '',
-      bioLink: row[9] || '',
-      url: row[10] || '',
-      bio: row[11] || '',
-      profilePic: row[12] || '',
-      profileType: row[13] || 'Individual',
-      tier: row[14] ? String(row[14]).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
-      location: row[15] ? String(row[15]).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
-      group: row[16] ? String(row[16]).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
-      campaign: row[17] ? String(row[17]).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
-      sow: row[18] ? String(row[18]).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
-      notes: parseJSON(row[19], []),
-      rateHistory: parseJSON(row[20], []),
-      rating: Number(row[21]) || 0,
-      workflowStatus: row[22] || 'New',
-      projectName: row[23] || '',
-      outreachStatus: row[24] || 'Not Started',
-      lastQuotedAt: row[25] || '',
+      saveDate: getVal("Ngày lưu trữ") || getVal("Ngày") || '',
+      platform: getVal("Platform") || 'TikTok',
+      nickname: getVal("Tên") || '',
+      channelId: getVal("ID") || '',
+      followers: getVal("Followers") || '',
+      averageView: Number(getVal("Avg View")) || 0,
+      averageEngagement: Number(getVal("Avg Engagement")) || 0,
+      phone: getVal("SĐT") || '',
+      email: getVal("Email") || '',
+      zalo: getVal("Zalo") || '',
+      bioLink: getVal("Link Bio") || '',
+      url: getVal("Link") || '',
+      bio: getVal("Bio") || '',
+      profilePic: getVal("Avatar") || getVal("Link ảnh") || '',
+      profileType: getVal("Profile") || 'Individual',
+      tier: getVal("Tier") ? String(getVal("Tier")).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
+      location: getVal("Vị trí") ? String(getVal("Vị trí")).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
+      group: getVal("Nhóm") ? String(getVal("Nhóm")).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
+      campaign: getVal("Campaign") ? String(getVal("Campaign")).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
+      sow: getVal("SOW") ? String(getVal("SOW")).split(',').map(function(s){return s.trim()}).filter(Boolean) : [],
+      notes: parseJSON(getVal("Notes"), []),
+      rateHistory: parseJSON(getVal("Rate History"), []),
+      rating: Number(getVal("Rating")) || 0,
+      workflowStatus: getVal("Workflow") || 'New',
+      projectName: getVal("Project Name") || '',
+      outreachStatus: getVal("Outreach Status") || 'Not Started',
+      lastQuotedAt: getVal("Last Quoted At") || '',
       status: 'success'
     });
   }
@@ -855,13 +1210,60 @@ function doGet(e) {
                   <p className={textS}>
                     Copy chuỗi khóa vừa nhận được (bắt đầu bằng tiền tố <code>AIzaSy...</code>) và dán trực tiếp vào trường <b>Gemini API Key</b> ở trên.
                   </p>
-                  <p className={textS}>
-                    <b>💡 Lời khuyên thiết lập tối ưu:</b>
-                  </p>
-                  <ul className="list-disc pl-5 space-y-1 text-slate-400">
-                    <li><b>AI Base URL:</b> Giữ nguyên cấu hình mặc định là <code>https://generativelanguage.googleapis.com/v1beta/openai/</code> (đây là endpoint API chuẩn mực cung cấp tốc độ phản hồi cực nhanh).</li>
-                    <li><b>AI Model Name:</b> Sử dụng model <code>gemini-2.5-flash</code> (Model siêu nhanh, xử lý tức thì, chi phí token cực rẻ và thường miễn phí không giới hạn trong gói Free Tier). Ngoài ra bạn cũng có thể điền <code>gemini-2.5-pro</code> nếu muốn AI xử lý những văn bản SOW hoặc email phức tạp đòi hỏi chiều sâu suy luận cao.</li>
-                  </ul>
+                  
+                  <div className="mt-3.5 space-y-3">
+                    <h5 className={`font-bold text-xs ${textP}`}>📊 Bảng Model khuyên dùng:</h5>
+                    <div className="overflow-x-auto rounded-xl border border-white/5 bg-black/20">
+                      <table className="w-full text-xs text-left">
+                        <thead>
+                          <tr className="border-b border-white/5 bg-white/5 font-semibold text-slate-300">
+                            <th className="px-3 py-2">Model</th>
+                            <th className="px-3 py-2">Tốc độ</th>
+                            <th className="px-3 py-2">Chất lượng</th>
+                            <th className="px-3 py-2">Free Tier</th>
+                            <th className="px-3 py-2">Ghi chú</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5 text-slate-400">
+                          <tr>
+                            <td className="px-3 py-2 font-mono text-indigo-400">gemini-2.5-flash</td>
+                            <td className="px-3 py-2">⚡⚡⚡</td>
+                            <td className="px-3 py-2">★★★</td>
+                            <td className="px-3 py-2">✅ Không giới hạn</td>
+                            <td className="px-3 py-2"><b>Mặc định.</b> Tốt cho cào profile, phân loại nhanh</td>
+                          </tr>
+                          <tr>
+                            <td className="px-3 py-2 font-mono text-indigo-400">gemini-2.5-pro</td>
+                            <td className="px-3 py-2">⚡⚡</td>
+                            <td className="px-3 py-2">★★★★★</td>
+                            <td className="px-3 py-2">✅ 25 req/ngày</td>
+                            <td className="px-3 py-2">Tốt cho soạn email, parse báo giá phức tạp</td>
+                          </tr>
+                          <tr>
+                            <td className="px-3 py-2 font-mono text-indigo-400">gemini-2.0-flash</td>
+                            <td className="px-3 py-2">⚡⚡⚡</td>
+                            <td className="px-3 py-2">★★★</td>
+                            <td className="px-3 py-2">✅ Không giới hạn</td>
+                            <td className="px-3 py-2">Backup nếu 2.5-flash quá tải</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 space-y-2">
+                    <h5 className={`font-bold text-xs ${textP}`}>🌐 Hướng dẫn đổi sang provider khác (OpenRouter, Groq, v.v.):</h5>
+                    <ul className="list-decimal pl-5 space-y-1.5 text-slate-400">
+                      <li><b>Bước 1:</b> Đăng ký tài khoản tại provider (VD: <a href="https://openrouter.ai" target="_blank" rel="noreferrer" className="text-indigo-400 underline">openrouter.ai</a>)</li>
+                      <li><b>Bước 2:</b> Lấy API Key từ provider của bạn</li>
+                      <li><b>Bước 3:</b> Đổi <b>AI Base URL</b> sang endpoint của provider (VD: <code>https://openrouter.ai/api/v1/</code>)</li>
+                      <li><b>Bước 4:</b> Đổi <b>AI Model Name</b> sang model mong muốn (VD: <code>google/gemini-2.5-pro-preview</code>)</li>
+                      <li><b>Bước 5:</b> Dán API Key của provider vào trường <b>Gemini API Key</b></li>
+                    </ul>
+                    <p className={`text-xs ${textM} italic mt-1.5`}>
+                      * Lưu ý quan trọng: ScoutHub sử dụng chuẩn OpenAI-compatible API, nên bất kỳ provider nào hỗ trợ endpoint <code>/chat/completions</code> đều có thể hoạt động hoàn hảo.
+                    </p>
+                  </div>
                 </div>
               </div>
             )}

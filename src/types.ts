@@ -131,3 +131,78 @@ export interface SavedView {
   projectName?: string;
 }
 
+// === EXECUTION HUB TYPES ===
+
+export type ExecutionPhase = 'connecting' | 'launching' | 'wrapping';
+
+// Lean status — mỗi phase chỉ 3-4 options
+export type ConnectingStatus = 'pending_quote' | 'dealing' | 'confirmed' | 'cancelled';
+export type LaunchingStatus = 'preparing' | 'in_progress' | 'aired' | 'cancelled';
+export type WrappingStatus = 'pending_payment' | 'processing' | 'completed' | 'cancelled';
+
+export interface Campaign {
+  id: string;
+  name: string;
+  chargeCode: string;
+  brand: string;
+  description: string;
+  startDate: string;
+  endDate: string;
+  budget?: number;
+  status: 'draft' | 'active' | 'completed' | 'paused';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExecutionProfile {
+  id: string;
+  campaignId: string;
+  profileId: string;              // Reference → RestoredData.id
+  phase: ExecutionPhase;
+
+  // --- CONNECTING ---
+  connectingStatus: ConnectingStatus;
+  confirmedSOW: SOWItem[];
+  totalCost: number;
+  currency: string;               // 'VND' | 'USD'
+  paymentTerm: string;            // "Net 30", "COD", "50/50"
+  confirmMessageRaw: string;      // Tin nhắn gốc confirm
+
+  // --- LAUNCHING ---
+  launchingStatus: LaunchingStatus;
+  contractType?: 'individual' | 'company' | 'business_household';
+  contractNotes: string;          // Ghi chú hợp đồng tự do
+  contractGoogleDocUrl?: string;
+  confirmEmailDraft?: string;
+  contentDeadline?: string;
+  publishedLinks: string[];
+
+  // --- WRAPPING ---
+  wrappingStatus: WrappingStatus;
+  expectedPaymentDate?: string;
+  actualPaymentDate?: string;
+  invoiceNumber?: string;
+  acceptanceNotes: string;        // Ghi chú nghiệm thu
+  followUpItems: FollowUpItem[];
+
+  // --- META ---
+  notes: string;                  // Ghi chú tự do chung
+  assignedAt: string;
+  updatedAt: string;
+}
+
+export interface SOWItem {
+  name: string;
+  price: number;
+  currency: string;
+  quantity: number;
+}
+
+export interface FollowUpItem {
+  id: string;
+  description: string;
+  dueDate: string;
+  completed: boolean;
+}
+
+

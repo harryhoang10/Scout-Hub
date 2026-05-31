@@ -7,6 +7,7 @@ import { TagInput } from './ui/tag-input';
 import * as XLSX from 'xlsx';
 import { RestoredData } from '../types';
 import { cn } from '../lib/utils';
+import { showToast } from './ui/Toast';
 
 interface RestoredProps {
   data: RestoredData[];
@@ -89,10 +90,10 @@ export function Restored({ data, onUpdateData }: RestoredProps) {
         }).filter(r => r.url && (r.url.includes('tiktok.com') || r.url.includes('facebook.com')));
 
         onUpdateData([...data, ...newRows]);
-        alert(`Đã import thành công ${newRows.length} dòng dữ liệu.`);
+        showToast(`Đã import thành công ${newRows.length} dòng dữ liệu.`, "success");
       } catch (error) {
         console.error("Error parsing file:", error);
-        alert("Lỗi khi đọc file. Vui lòng đảm bảo file có các cột tương ứng.");
+        showToast("Lỗi khi đọc file. Vui lòng đảm bảo file có các cột tương ứng.", "error");
       }
     };
     reader.readAsBinaryString(file);
@@ -175,9 +176,9 @@ export function Restored({ data, onUpdateData }: RestoredProps) {
     const removedCount = data.length - uniqueData.length;
     if (removedCount > 0) {
       onUpdateData(uniqueData);
-      alert(`Đã loại bỏ ${removedCount} dữ liệu trùng lặp.`);
+      showToast(`Đã loại bỏ ${removedCount} dữ liệu trùng lặp.`, "success");
     } else {
-      alert("Không tìm thấy dữ liệu trùng lặp nào.");
+      showToast("Không tìm thấy dữ liệu trùng lặp nào.", "info");
     }
   };
 

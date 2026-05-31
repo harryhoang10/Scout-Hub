@@ -9,12 +9,15 @@ import { TagSelector } from './TagSelector';
 import { upsertToSheet, deleteFromSheet } from '../lib/api';
 import { CompareModal } from './CompareModal';
 import { CampaignBoard } from './CampaignBoard';
-import { OutreachComposer } from './OutreachComposer';
-import { QuotationParser } from './QuotationParser';
-import { KPIDashboardModal } from './KPIDashboardModal';
 import { ProfileDrawer } from './ProfileDrawer';
 import { mergeProfileBatch } from '../lib/profileChangeDetection';
 import { classifyProfile, findDuplicateGroups, mergeDuplicateGroup } from '../lib/profileIntelligence';
+import { showToast } from './ui/Toast';
+
+// Lazy load large modals
+const OutreachComposer = React.lazy(() => import('./OutreachComposer').then(m => ({ default: m.OutreachComposer })));
+const QuotationParser = React.lazy(() => import('./QuotationParser').then(m => ({ default: m.QuotationParser })));
+const KPIDashboardModal = React.lazy(() => import('./KPIDashboardModal').then(m => ({ default: m.KPIDashboardModal })));
 
 const MAX_STARS = 5;
 const NOTE_TEMPLATES = [
@@ -391,10 +394,10 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
         
         const merged = mergeProfileBatch(data, imported, 'sheet');
         onUpdateData(merged.data);
-        alert(`Sync Sheet xong: ${merged.stats.added} mới, ${merged.stats.updated} cập nhật, ${merged.stats.changed} có thay đổi.`);
+        showToast(`Sync Sheet xong: ${merged.stats.added} mới, ${merged.stats.updated} cập nhật, ${merged.stats.changed} có thay đổi.`, "success");
       }
     } catch (e: any) {
-      alert(`Lỗi: ${e.message}`);
+      showToast(`Lỗi: ${e.message}`, "error");
     }
     setIsRefreshing(false);
   };
@@ -440,9 +443,9 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
         })).filter(r => r.url);
         const merged = mergeProfileBatch(data, newRows, 'import');
         onUpdateData(merged.data);
-        alert(`Đã import ${newRows.length} dòng: ${merged.stats.added} mới, ${merged.stats.updated} cập nhật, ${merged.stats.changed} có thay đổi.`);
+        showToast(`Đã import ${newRows.length} dòng: ${merged.stats.added} mới, ${merged.stats.updated} cập nhật, ${merged.stats.changed} có thay đổi.`, "success");
       } catch (error) {
-        alert("Lỗi khi đọc file.");
+        showToast("Lỗi khi đọc file.", "error");
       }
     };
     reader.readAsBinaryString(file);
@@ -473,6 +476,13 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
       'Avg Engagement': row.averageEngagement ? roundMetric(row.averageEngagement) : '',
       'SĐT': row.phone || '',
       'Email': row.email || '',
+      'Zalo': (() => {
+        let digits = (row.phone || '').replace(/\D/g, '');
+        if (digits.startsWith('84')) {
+          digits = '0' + digits.substring(2);
+        }
+        return digits ? `https://zalo.me/${digits}` : '';
+      })(),
       'Link Bio': row.bioLink || '',
       'Link': row.url,
       'Bio': row.bio || '',
@@ -563,7 +573,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
   const removeDuplicates = () => {
     const groups = findDuplicateGroups(data);
     if (groups.length === 0) {
-      alert("Không có trùng lặp.");
+      showToast("Không có trùng lặp.", "info");
       return;
     }
 
@@ -571,14 +581,14 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
     const mergedData = groups.reduce((currentData, group) => mergeDuplicateGroup(currentData, group.profiles.map(profile => profile.id)), data);
     const removed = data.length - mergedData.length;
     onUpdateData(mergedData);
-    alert(`Đã gộp ${groups.length} nhóm trùng lặp, loại ${removed} dòng duplicate.`);
+    showToast(`Đã gộp ${groups.length} nhóm trùng lặp, loại ${removed} dòng duplicate.`, "success");
   };
 
   const mergeOneDuplicateGroup = (ids: string[]) => {
     const mergedData = mergeDuplicateGroup(data, ids);
     const removed = data.length - mergedData.length;
     onUpdateData(mergedData);
-    if (removed > 0) alert(`Đã gộp duplicate và loại ${removed} dòng.`);
+    if (removed > 0) showToast(`Đã gộp duplicate và loại ${removed} dòng.`, "success");
   };
 
   const handleSort = (field: SortField) => {
@@ -617,7 +627,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
   const handleCopy = (text: string, label: string) => {
     if (!text) return;
     navigator.clipboard.writeText(text);
-    alert(`Đã copy ${label}: ${text}`);
+    showToast(`Đã copy ${label}: ${text}`, "success");
   };
 
   const handleProfileRowClick = (event: React.MouseEvent, row: RestoredData) => {
@@ -745,7 +755,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
       const editedRows = updatedData.filter(r => selectedIds.has(r.id));
       if (editedRows.length > 0) upsertToSheet(webhookUrl, editedRows);
     }
-    alert(`Đã chuẩn hóa thành công thông tin liên hệ cho ${selectedIds.size} profile!`);
+    showToast(`Đã chuẩn hóa thành công thông tin liên hệ cho ${selectedIds.size} profile!`, "success");
   };
 
   const refreshProfiles = (profiles: RestoredData[]) => {
@@ -1496,7 +1506,30 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
                   </select>
                 </div>
                 <div className="mt-2 space-y-1">
-                  {row.phone && row.phone !== 'N/A' && <div className={`text-xs flex items-center gap-1 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}><Phone className="h-3 w-3" /> {row.phone}</div>}
+                  {row.phone && row.phone !== 'N/A' && row.phone !== '-' && (
+                    <div className="text-xs flex items-center gap-2">
+                      <div className={`flex items-center gap-1 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                        <Phone className="h-3 w-3" /> {row.phone}
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          let digits = (row.phone || '').replace(/\D/g, '');
+                          if (digits.startsWith('84')) {
+                            digits = '0' + digits.substring(2);
+                          }
+                          window.open(`https://zalo.me/${digits}`, '_blank');
+                        }}
+                        className={`text-[9px] px-1.5 py-0.2 rounded font-bold border transition-colors ${
+                          isDark 
+                            ? 'bg-blue-500/10 border-blue-500/30 text-blue-400 hover:bg-blue-500/20' 
+                            : 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100'
+                        }`}
+                      >
+                        💬 Zalo
+                      </button>
+                    </div>
+                  )}
                   {row.email && row.email !== 'N/A' && <div className={`text-xs ${textS} flex items-center gap-1 truncate`}><Mail className="h-3 w-3 shrink-0" /> {row.email}</div>}
                   {row.audienceHint && <div className={`text-[11px] ${textM} line-clamp-2`} title={row.audienceHint}>{row.audienceHint}</div>}
                 </div>
@@ -1546,6 +1579,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
                   <th className="px-3 py-3 font-medium w-24 text-right">Avg Engage</th>
                   <th className="px-3 py-3 font-medium w-24 text-center">Độ phù hợp</th>
                   <th className="px-3 py-3 font-medium w-24 text-center">Liên hệ</th>
+                  <th className="px-3 py-3 font-medium w-20 text-center">Zalo</th>
                   <th className="px-3 py-3 font-medium min-w-[110px]">Workflow</th>
                   <th className="px-3 py-3 font-medium min-w-[120px]">Chủ đề (Niche)</th>
                   <th className="px-3 py-3 font-medium w-16 text-center cursor-pointer" onClick={() => handleSort('rating')}>
@@ -1558,7 +1592,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
               </thead>
               <tbody className={`divide-y ${divideC}`}>
                 {filteredAndSortedData.length === 0 ? (
-                  <tr><td colSpan={16} className={`px-4 py-12 text-center ${textM}`}>
+                  <tr><td colSpan={17} className={`px-4 py-12 text-center ${textM}`}>
                     <Users className="h-8 w-8 mx-auto mb-2 opacity-30" /><p>Chưa có dữ liệu lưu trữ.</p>
                   </td></tr>
                 ) : filteredAndSortedData.map((row, index) => (
@@ -1628,6 +1662,31 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
                             <Mail className="h-3 w-3" />
                           </button>
                         ) : null}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      <div onClick={(e) => e.stopPropagation()}>
+                        {row.phone && row.phone !== 'N/A' && row.phone !== '-' ? (
+                          <button
+                            onClick={() => {
+                              let digits = (row.phone || '').replace(/\D/g, '');
+                              if (digits.startsWith('84')) {
+                                digits = '0' + digits.substring(2);
+                              }
+                              window.open(`https://zalo.me/${digits}`, '_blank');
+                            }}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md border text-[11px] font-semibold transition-all hover:scale-105 active:scale-[0.98] cursor-pointer ${
+                              isDark 
+                                ? 'bg-blue-500/10 border-blue-500/25 text-blue-400 hover:bg-blue-500/20' 
+                                : 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100'
+                            }`}
+                            title={`Mở Zalo: ${row.phone}`}
+                          >
+                            💬 Chat
+                          </button>
+                        ) : (
+                          <span className={textM}>—</span>
+                        )}
                       </div>
                     </td>
                     <td className="px-3 py-3">
@@ -1742,42 +1801,53 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
         }}
       />
 
-      {showOutreachComposer && (
-        <OutreachComposer
-          profiles={outreachTargets}
-          projectName={projectName}
-          onClose={() => setShowOutreachComposer(false)}
-          onUpdateProfile={(id, updates) => {
-            const newData = data.map(r => r.id === id ? { ...r, ...updates } : r);
-            onUpdateData(newData);
-            const editedRow = newData.find(r => r.id === id);
-            if (webhookUrl && editedRow) upsertToSheet(webhookUrl, [editedRow]);
-          }}
-          theme={theme}
-        />
-      )}
+      <React.Suspense fallback={
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="text-violet-400 font-bold flex items-center gap-2">
+            <Loader2 className="animate-spin h-5 w-5" />
+            <span>Đang tải công cụ AI...</span>
+          </div>
+        </div>
+      }>
+        {showOutreachComposer && (
+          <OutreachComposer
+            profiles={outreachTargets}
+            projectName={projectName}
+            onClose={() => setShowOutreachComposer(false)}
+            onUpdateProfile={(id, updates) => {
+              const newData = data.map(r => r.id === id ? { ...r, ...updates } : r);
+              onUpdateData(newData);
+              const editedRow = newData.find(r => r.id === id);
+              if (webhookUrl && editedRow) upsertToSheet(webhookUrl, [editedRow]);
+            }}
+            theme={theme}
+          />
+        )}
 
-      {showQuotationParser && (
-        <QuotationParser
-          profile={quotationTarget}
-          allProfiles={data}
-          onClose={() => { setShowQuotationParser(false); setQuotationTarget(null); }}
-          onUpdateProfile={(id, updates) => {
-            const newData = data.map(r => r.id === id ? { ...r, ...updates } : r);
-            onUpdateData(newData);
-            const editedRow = newData.find(r => r.id === id);
-            if (webhookUrl && editedRow) upsertToSheet(webhookUrl, [editedRow]);
-          }}
-          theme={theme}
-        />
-      )}
+        {showQuotationParser && (
+          <QuotationParser
+            profile={quotationTarget}
+            allProfiles={data}
+            onClose={() => { setShowQuotationParser(false); setQuotationTarget(null); }}
+            onUpdateProfile={(id, updates) => {
+              const newData = data.map(r => r.id === id ? { ...r, ...updates } : r);
+              onUpdateData(newData);
+              const editedRow = newData.find(r => r.id === id);
+              if (webhookUrl && editedRow) upsertToSheet(webhookUrl, [editedRow]);
+            }}
+            theme={theme}
+          />
+        )}
 
-      <KPIDashboardModal
-        isOpen={showKPIDashboard}
-        onClose={() => setShowKPIDashboard(false)}
-        data={filteredAndSortedData}
-        theme={theme}
-      />
+        {showKPIDashboard && (
+          <KPIDashboardModal
+            isOpen={showKPIDashboard}
+            onClose={() => setShowKPIDashboard(false)}
+            data={filteredAndSortedData}
+            theme={theme}
+          />
+        )}
+      </React.Suspense>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import {
   StickyNote, CheckCircle2, ChevronDown, DollarSign, Send, Globe, Award, ShieldAlert, Copy, Check
 } from 'lucide-react';
 import { RestoredData, Tier, WorkflowStatus, OutreachStatus } from '../types';
+import { showToast } from './ui/Toast';
 
 interface ProfileDrawerProps {
   isOpen: boolean;
@@ -109,6 +110,7 @@ export function ProfileDrawer({
     if (!text) return;
     navigator.clipboard.writeText(text);
     setCopySuccess(prev => ({ ...prev, [id]: true }));
+    showToast(`Đã copy ${id === 'phone' ? 'SĐT' : id === 'email' ? 'Email' : 'Link'}: ${text}`, 'success');
     setTimeout(() => {
       setCopySuccess(prev => ({ ...prev, [id]: false }));
     }, 2000);
@@ -160,7 +162,7 @@ export function ProfileDrawer({
     e.preventDefault();
     const priceNum = parseFloat(ratePrice.replace(/[^\d]/g, ''));
     if (isNaN(priceNum) || priceNum <= 0) {
-      alert("Vui lòng nhập giá trị hợp lệ!");
+      showToast("Vui lòng nhập giá trị hợp lệ!", "error");
       return;
     }
 
@@ -590,8 +592,29 @@ export function ProfileDrawer({
                           className={`w-full pl-8 pr-3 py-2 text-xs rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500/50 ${inputBg}`}
                         />
                       </div>
+                      {profile.phone && profile.phone !== 'N/A' && profile.phone !== '-' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            let digits = (profile.phone || '').replace(/\D/g, '');
+                            if (digits.startsWith('84')) {
+                              digits = '0' + digits.substring(2);
+                            }
+                            window.open(`https://zalo.me/${digits}`, '_blank');
+                          }}
+                          className={`px-3 py-2 rounded-lg flex items-center justify-center text-xs font-semibold border transition-all hover:scale-105 active:scale-[0.98] cursor-pointer ${
+                            isDark 
+                              ? 'bg-blue-500/10 border-blue-500/30 text-blue-400 hover:bg-blue-500/20' 
+                              : 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100'
+                          }`}
+                          title="Chat Zalo"
+                        >
+                          💬 Zalo
+                        </button>
+                      )}
                       {profile.phone && (
                         <button
+                          type="button"
                           onClick={() => handleCopy(profile.phone || '', 'phone')}
                           className={`px-3 rounded-lg flex items-center justify-center transition-colors ${btnOutline}`}
                           title="Copy số điện thoại"

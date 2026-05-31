@@ -3,6 +3,7 @@ import { RestoredData, ParsedQuotation } from '../types';
 import {
   X, Loader2, CheckCircle, MessageSquare, Sparkles, Edit3, Search, DollarSign, Clock, Shield, FileText, AlertCircle
 } from 'lucide-react';
+import { showToast } from './ui/Toast';
 
 function formatFollowers(val: string | number | undefined): string {
   if (!val) return '-';
@@ -98,7 +99,7 @@ export const QuotationParser: React.FC<QuotationParserProps> = ({
 
     const aiApiKey = localStorage.getItem('scout_hub_gemini_key') || '';
     if (!aiApiKey) {
-      alert('Chưa cấu hình AI API Key. Vui lòng vào Cài đặt để thêm key.');
+      showToast('Chưa cấu hình AI API Key. Vui lòng vào Cài đặt để thêm key.', 'error');
       setIsParsing(false);
       return;
     }
@@ -166,7 +167,7 @@ HƯỚNG DẪN PARSE:
       });
 
       if (!response.ok) {
-        alert(`Lỗi API (${response.status}). Kiểm tra AI Key trong Cài đặt.`);
+        showToast(`Lỗi API (${response.status}). Kiểm tra AI Key trong Cài đặt.`, 'error');
         setIsParsing(false);
         return;
       }
@@ -195,7 +196,7 @@ HƯỚNG DẪN PARSE:
         if (match) setSelectedProfileId(match.id);
       }
     } catch (e: any) {
-      alert(`Lỗi parse: ${e.message}`);
+      showToast(`Lỗi parse: ${e.message}`, 'error');
     }
     setIsParsing(false);
   };
@@ -216,7 +217,7 @@ HƯỚNG DẪN PARSE:
 
   const handleSaveToCRM = () => {
     if (!selectedProfile || editedItems.length === 0) {
-      alert('Vui lòng chọn profile và đảm bảo có ít nhất 1 SOW item.');
+      showToast('Vui lòng chọn profile và đảm bảo có ít nhất 1 SOW item.', 'error');
       return;
     }
 

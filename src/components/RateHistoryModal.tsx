@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { RestoredData } from '../types';
 import { X, Plus, Trash2, Calendar, DollarSign, History, MessageSquare, Loader2, Sparkles } from 'lucide-react';
+import { showToast } from './ui/Toast';
 
 function cleanJsonResponse(text: string): string {
   let cleaned = text.trim();
@@ -241,7 +242,7 @@ export const RateHistoryModal: React.FC<RateHistoryModalProps> = ({ isOpen, onCl
                 setIsParsing(true);
                 setParsedItems([]);
                 const aiKey = localStorage.getItem('scout_hub_gemini_key') || '';
-                if (!aiKey) { alert('Chưa cấu hình AI API Key.'); setIsParsing(false); return; }
+                if (!aiKey) { showToast('Chưa cấu hình AI API Key.', 'error'); setIsParsing(false); return; }
                 let baseUrl = localStorage.getItem('scout_hub_ai_base_url') || 'https://generativelanguage.googleapis.com/v1beta/openai/';
                 if (!baseUrl.endsWith('/')) baseUrl += '/';
                 const model = localStorage.getItem('scout_hub_ai_model') || 'gemini-2.5-flash';
@@ -255,14 +256,14 @@ export const RateHistoryModal: React.FC<RateHistoryModalProps> = ({ isOpen, onCl
                       temperature: 0.2, max_tokens: 400,
                     }),
                   });
-                  if (!res.ok) { alert('Lỗi API'); setIsParsing(false); return; }
+                  if (!res.ok) { showToast('Lỗi API', 'error'); setIsParsing(false); return; }
                   const data = await res.json();
                   const text = data?.choices?.[0]?.message?.content?.trim() || '';
                   const cleanedJson = cleanJsonResponse(text);
                   const parsed = JSON.parse(cleanedJson);
                   setParsedItems(parsed.items || []);
                   setParsedNote(parsed.note || '');
-                } catch (e: any) { alert('Lỗi parse: ' + e.message); }
+                } catch (e: any) { showToast('Lỗi parse: ' + e.message, 'error'); }
                 setIsParsing(false);
               }}
               disabled={isParsing || !rawMessage.trim()}

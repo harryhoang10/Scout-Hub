@@ -4,6 +4,7 @@ import {
   X, Send, Copy, RefreshCw, Plus, Trash2, ChevronLeft, ChevronRight,
   Loader2, CheckCircle, Mail, MessageCircle, Briefcase, Sparkles, FileText, Edit3
 } from 'lucide-react';
+import { showToast } from './ui/Toast';
 
 const TEMPLATE_STORAGE_KEY = 'scout_hub_outreach_templates';
 
@@ -282,7 +283,7 @@ export const OutreachComposer: React.FC<OutreachComposerProps> = ({
 
   const handleDeleteProject = () => {
     if (projects.length <= 1) {
-      alert('Không thể xóa dự án duy nhất còn lại.');
+      showToast('Không thể xóa dự án duy nhất còn lại.', 'error');
       return;
     }
     if (!confirm(`Xóa dự án "${activeProject?.name}" này?`)) return;
@@ -520,7 +521,7 @@ BỘ QUY TẮC VIẾT SẮC BÉN (BẮT BUỘC TUÂN THỦ):
 
     const aiApiKey = localStorage.getItem('scout_hub_gemini_key') || '';
     if (!aiApiKey) {
-      alert('⚠️ Chưa cấu hình AI API Key. Vui lòng vào Cài đặt để thêm key.');
+      showToast('⚠️ Chưa cấu hình AI API Key. Vui lòng vào Cài đặt để thêm key.', 'error');
       setIsBulkGenerating(false);
       return;
     }
