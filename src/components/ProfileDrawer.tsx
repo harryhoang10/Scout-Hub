@@ -1,10 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import {
   X, Phone, Mail, Link as LinkIcon, Briefcase, Star, History, Eye,
-  StickyNote, CheckCircle2, ChevronDown, DollarSign, Send, Globe, Award, ShieldAlert, Copy, Check
+  StickyNote, CheckCircle2, ChevronDown, DollarSign, Send, Globe, Award, ShieldAlert, Copy, Check, FileText
 } from 'lucide-react';
 import { RestoredData, Tier, WorkflowStatus, OutreachStatus } from '../types';
 import { showToast } from './ui/Toast';
+import { cleanAvatarUrl } from '../lib/utils';
 
 interface ProfileDrawerProps {
   isOpen: boolean;
@@ -18,7 +19,7 @@ interface ProfileDrawerProps {
   campaigns?: string[];
   sows?: string[];
   calculateFitScore: (profile: RestoredData) => { score: number; positives: string[]; negatives: string[] };
-  defaultTab?: 'overview' | 'details' | 'notes_rates' | 'history';
+  defaultTab?: 'overview' | 'details' | 'notes_rates' | 'history' | 'legal';
   onOpenOutreach?: (profile: RestoredData) => void;
   onOpenQuotation?: (profile: RestoredData) => void;
 }
@@ -53,7 +54,7 @@ export function ProfileDrawer({
   onOpenOutreach,
   onOpenQuotation
 }: ProfileDrawerProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'details' | 'notes_rates' | 'history'>(defaultTab);
+  const [activeTab, setActiveTab] = useState<'overview' | 'details' | 'notes_rates' | 'history' | 'legal'>(defaultTab);
 
   // Sync tab with defaultTab when drawer profile changes
   React.useEffect(() => {
@@ -88,6 +89,8 @@ export function ProfileDrawer({
   const dividerC = isDark ? 'border-white/[0.06]' : 'border-slate-100';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-500';
   const textMuted = isDark ? 'text-slate-500' : 'text-slate-400';
+  const textPrimary = isDark ? 'text-white' : 'text-slate-900';
+  const borderColor = isDark ? 'border-white/[0.06]' : 'border-slate-200';
   
   const tagColors: Record<string, string> = {
     violet: isDark ? 'bg-violet-900/40 text-violet-300 border border-violet-500/20' : 'bg-violet-100 text-violet-700 border border-violet-200',
@@ -357,12 +360,13 @@ export function ProfileDrawer({
 
         {/* Tab Navigation */}
         <div className={`px-4 flex border-b ${dividerC} bg-slate-500/5`}>
-          {(['overview', 'details', 'notes_rates', 'history'] as const).map(tab => {
+          {(['overview', 'details', 'notes_rates', 'legal', 'history'] as const).map(tab => {
             const isActive = activeTab === tab;
             const tabLabel = 
               tab === 'overview' ? 'Tổng quan' :
               tab === 'details' ? 'Dữ liệu CRM' :
-              tab === 'notes_rates' ? 'Báo giá & Note' : 'Thay đổi';
+              tab === 'notes_rates' ? 'Báo giá & Note' :
+              tab === 'legal' ? 'Pháp lý' : 'Thay đổi';
             return (
               <button
                 key={tab}
@@ -687,6 +691,43 @@ export function ProfileDrawer({
                       )}
                     </div>
                   </div>
+
+                  {/* Link ảnh đại diện */}
+                  <div className="space-y-1">
+                    <label className={`text-xs font-semibold ${textSecondary}`}>Link ảnh đại diện</label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Globe className={`absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 ${textMuted}`} />
+                        <input
+                          type="text"
+                          value={profile.profilePic || ''}
+                          onChange={(e) => onUpdateRow(profile.id, 'profilePic', cleanAvatarUrl(e.target.value))}
+                          placeholder="https://..."
+                          className={`w-full pl-8 pr-3 py-2 text-xs rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500/50 ${inputBg}`}
+                        />
+                      </div>
+                      {profile.profilePic && (
+                        <>
+                          <a
+                            href={profile.profilePic}
+                            target="_blank"
+                            rel="noreferrer"
+                            className={`px-3 rounded-lg flex items-center justify-center transition-colors ${btnOutline}`}
+                            title="Xem ảnh"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </a>
+                          <button
+                            onClick={() => handleCopy(profile.profilePic || '', 'profilepic')}
+                            className={`px-3 rounded-lg flex items-center justify-center transition-colors ${btnOutline}`}
+                            title="Copy link ảnh"
+                          >
+                            {copySuccess['profilepic'] ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -996,6 +1037,167 @@ export function ProfileDrawer({
                   ))
                 )}
               </div>
+            </div>
+          )}
+
+          {/* TAB 5: LEGAL & CONTRACT INFO */}
+          {activeTab === 'legal' && (
+            <div className="space-y-5 animate-fade-in text-xs">
+              <div className="flex items-center justify-between border-b pb-2.5 border-slate-500/10">
+                <h4 className={`text-sm font-bold ${textPrimary} flex items-center gap-1.5`}>
+                  <FileText className="h-4.5 w-4.5 text-violet-500" />
+                  <span>Thông tin Pháp lý & Hợp đồng</span>
+                </h4>
+                {profile.contractInfo && (
+                  <span className="px-2 py-0.5 rounded bg-violet-500/15 text-violet-400 border border-violet-500/20 text-[10px] font-bold">
+                    {profile.contractInfo.entityType === 'individual' ? '👤 Cá nhân' : profile.contractInfo.entityType === 'company' ? '🏢 Công ty' : '🏪 Hộ kinh doanh'}
+                  </span>
+                )}
+              </div>
+
+              {profile.contractInfo ? (
+                <div className="space-y-4">
+                  {/* Entity Type Details */}
+                  {profile.contractInfo.entityType === 'individual' && (
+                    <div className={`p-4 rounded-2xl border ${borderColor} ${isDark ? 'bg-white/[0.01]' : 'bg-slate-50'} space-y-3`}>
+                      <p className="font-extrabold text-[10px] uppercase text-violet-400 tracking-wider">Cá nhân (CCCD)</p>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-[10px] text-slate-500">Họ và tên</p>
+                          <p className={`font-bold mt-0.5 ${textPrimary}`}>{profile.contractInfo.fullName || 'Chưa có'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-slate-500">Số CCCD</p>
+                          <p className={`font-bold mt-0.5 ${textPrimary} font-mono`}>{profile.contractInfo.idNumber || 'Chưa có'}</p>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-[10px] text-slate-500">Ngày cấp</p>
+                          <p className={`font-semibold mt-0.5 ${textPrimary}`}>{profile.contractInfo.idIssueDate || 'Chưa có'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-slate-500">Nơi cấp</p>
+                          <p className={`font-semibold mt-0.5 ${textPrimary}`}>{profile.contractInfo.idIssuePlace || 'Chưa có'}</p>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-[10px] text-slate-500">MST cá nhân</p>
+                          <p className={`font-semibold mt-0.5 ${textPrimary} font-mono`}>{profile.contractInfo.personalTaxId || 'Chưa có'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-slate-500">Ảnh CCCD</p>
+                          {profile.contractInfo.cccdLink ? (
+                            <a href={profile.contractInfo.cccdLink} target="_blank" rel="noreferrer" className="text-violet-500 hover:underline font-bold mt-0.5 block truncate">Xem ảnh CCCD</a>
+                          ) : (
+                            <p className="text-slate-500 mt-0.5 font-semibold">Chưa đính kèm</p>
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-slate-500">Địa chỉ thường trú</p>
+                        <p className={`font-semibold mt-0.5 ${textPrimary}`}>{profile.contractInfo.permanentAddress || 'Chưa có'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-slate-500">Địa chỉ liên hệ</p>
+                        <p className={`font-semibold mt-0.5 ${textPrimary}`}>{profile.contractInfo.contactAddress || 'Chưa có'}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {profile.contractInfo.entityType === 'company' && (
+                    <div className={`p-4 rounded-2xl border ${borderColor} ${isDark ? 'bg-white/[0.01]' : 'bg-slate-50'} space-y-3`}>
+                      <p className="font-extrabold text-[10px] uppercase text-indigo-400 tracking-wider">Doanh nghiệp (Company)</p>
+                      <div>
+                        <p className="text-[10px] text-slate-500">Tên Công ty</p>
+                        <p className={`font-bold mt-0.5 ${textPrimary}`}>{profile.contractInfo.companyName || 'Chưa có'}</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-[10px] text-slate-500">Mã số thuế</p>
+                          <p className={`font-bold mt-0.5 ${textPrimary} font-mono`}>{profile.contractInfo.companyTaxId || 'Chưa có'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-slate-500">Đại diện pháp luật</p>
+                          <p className={`font-semibold mt-0.5 ${textPrimary}`}>{profile.contractInfo.legalRepresentative || 'Chưa có'}</p>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-[10px] text-slate-500">Chức vụ đại diện</p>
+                          <p className={`font-semibold mt-0.5 ${textPrimary}`}>{profile.contractInfo.position || 'Giám đốc'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-slate-500">Ủy quyền</p>
+                          <p className={`font-semibold mt-0.5 ${textPrimary}`}>{profile.contractInfo.authorization || 'Không có'}</p>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-slate-500">Địa chỉ trụ sở</p>
+                        <p className={`font-semibold mt-0.5 ${textPrimary}`}>{profile.contractInfo.companyAddress || 'Chưa có'}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {profile.contractInfo.entityType === 'business_household' && (
+                    <div className={`p-4 rounded-2xl border ${borderColor} ${isDark ? 'bg-white/[0.01]' : 'bg-slate-50'} space-y-3`}>
+                      <p className="font-extrabold text-[10px] uppercase text-amber-400 tracking-wider">Hộ kinh doanh cá thể</p>
+                      <div>
+                        <p className="text-[10px] text-slate-500">Tên Hộ kinh doanh</p>
+                        <p className={`font-bold mt-0.5 ${textPrimary}`}>{profile.contractInfo.companyName || 'Chưa có'}</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-[10px] text-slate-500">Số GPKD Hộ Kinh Doanh</p>
+                          <p className={`font-bold mt-0.5 ${textPrimary} font-mono`}>{profile.contractInfo.businessRegNo || 'Chưa có'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-slate-500">Chủ hộ kinh doanh</p>
+                          <p className={`font-semibold mt-0.5 ${textPrimary}`}>{profile.contractInfo.businessOwner || 'Chưa có'}</p>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-slate-500">Địa chỉ kinh doanh</p>
+                        <p className={`font-semibold mt-0.5 ${textPrimary}`}>{profile.contractInfo.businessAddress || 'Chưa có'}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Bank Info (Shared) */}
+                  <div className={`p-4 rounded-2xl border ${borderColor} ${isDark ? 'bg-white/[0.01]' : 'bg-slate-50'} space-y-3`}>
+                    <p className="font-extrabold text-[10px] uppercase text-emerald-400 tracking-wider">Thông tin Ngân hàng thụ hưởng</p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-[10px] text-slate-500">Chủ tài khoản ngân hàng</p>
+                        <p className={`font-bold mt-0.5 ${textPrimary}`}>{profile.contractInfo.bankAccountName || 'Chưa có'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-slate-500">Số tài khoản</p>
+                        <p className={`font-bold mt-0.5 ${textPrimary} font-mono`}>{profile.contractInfo.bankAccountNo || 'Chưa có'}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-slate-500">Mở tại Ngân hàng</p>
+                      <p className={`font-semibold mt-0.5 ${textPrimary}`}>{profile.contractInfo.bankName || 'Chưa có'}</p>
+                    </div>
+                  </div>
+
+                  <p className="text-[10px] text-slate-500 italic text-center pt-2">
+                    💡 Thông tin được thu thập và đồng bộ từ Execution Hub.
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-12 px-4 text-center border border-dashed rounded-2xl border-slate-500/20">
+                  <div className="w-12 h-12 rounded-full bg-violet-500/10 text-violet-500 flex items-center justify-center mb-4">
+                    <FileText className="h-6 w-6" />
+                  </div>
+                  <h5 className={`font-bold ${textPrimary} mb-1`}>Chưa có thông tin pháp lý hợp đồng</h5>
+                  <p className={`text-[11px] ${textSecondary} max-w-xs leading-relaxed`}>
+                    Vui lòng vào **Execution Hub**, chọn chiến dịch, click chuột vào KOL này để trích xuất nội dung Zalo chat hoặc điền thông tin để tạo Hợp đồng mẫu.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

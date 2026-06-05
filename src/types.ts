@@ -116,6 +116,69 @@ export interface RestoredData extends ProfileData {
   lastReviewedAt?: string;
   lastChangedAt?: string;
   changeHistory?: ProfileChangeRecord[];
+  
+  // Priority 1.4: Execution Sync Fields for Google Sheet
+  executionPhase?: string;
+  executionStatus?: string;
+  confirmedCost?: number;
+  confirmedSOW?: string;
+
+  // Priority 3: Contract Info inside CRM Profile
+  contractInfo?: KOLContractInfo;
+}
+
+export interface KOLContractInfo {
+  entityType: 'individual' | 'company' | 'business_household';
+  
+  // === Cá nhân ===
+  fullName?: string;
+  idNumber?: string;
+  idIssueDate?: string;
+  idIssuePlace?: string;
+  permanentAddress?: string;
+  contactAddress?: string;
+  personalTaxId?: string;
+  cccdLink?: string;
+  
+  // === Công ty ===
+  companyName?: string;
+  companyTaxId?: string;
+  companyAddress?: string;
+  legalRepresentative?: string;
+  authorization?: string;
+  position?: string;
+  
+  // === Hộ kinh doanh ===
+  businessRegNo?: string;
+  businessOwner?: string;
+  businessAddress?: string;
+  
+  // === Chung ===
+  bankAccountName?: string;
+  bankAccountNo?: string;
+  bankName?: string;
+  phone?: string;
+  email?: string;
+  
+  collectedAt?: string;
+  rawText?: string;
+}
+
+export interface ContractTemplate {
+  id: string;
+  name: string;
+  entityType: 'individual' | 'company' | 'business_household';
+  markdownContent: string;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExecutionActivity {
+  id: string;
+  action: string;
+  timestamp: string;
+  note?: string;
 }
 
 export interface SavedView {
@@ -185,10 +248,11 @@ export interface ExecutionProfile {
   acceptanceNotes: string;        // Ghi chú nghiệm thu
   followUpItems: FollowUpItem[];
 
-  // --- META ---
+  // --- META ===
   notes: string;                  // Ghi chú tự do chung
   assignedAt: string;
   updatedAt: string;
+  activityLog?: ExecutionActivity[];
 }
 
 export interface SOWItem {

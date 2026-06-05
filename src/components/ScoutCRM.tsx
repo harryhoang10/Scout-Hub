@@ -13,6 +13,7 @@ import { ProfileDrawer } from './ProfileDrawer';
 import { mergeProfileBatch } from '../lib/profileChangeDetection';
 import { classifyProfile, findDuplicateGroups, mergeDuplicateGroup } from '../lib/profileIntelligence';
 import { showToast } from './ui/Toast';
+import { cleanAvatarUrl } from '../lib/utils';
 
 // Lazy load large modals
 const OutreachComposer = React.lazy(() => import('./OutreachComposer').then(m => ({ default: m.OutreachComposer })));
@@ -49,11 +50,22 @@ interface ScoutCRMProps {
   theme?: string;
   onRefreshProfiles?: (urls: string[]) => void;
   projectName?: string;
+  focusedProfileId?: string | null;
+  onClearFocusedProfile?: () => void;
 }
 
 const OUTREACH_STATUSES: OutreachStatus[] = ['Not Started', 'Drafted', 'Sent', 'Replied', 'Negotiating', 'Confirmed', 'Declined'];
 
-export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfiles, projectName }: ScoutCRMProps) {
+export function ScoutCRM({
+  data,
+  onUpdateData,
+  webhookUrl,
+  theme,
+  onRefreshProfiles,
+  projectName,
+  focusedProfileId,
+  onClearFocusedProfile
+}: ScoutCRMProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<SortField>('saveDate');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
@@ -82,6 +94,14 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
   const activeDrawerProfile = useMemo(() => {
     return selectedProfileIdForDrawer ? data.find(p => p.id === selectedProfileIdForDrawer) || null : null;
   }, [selectedProfileIdForDrawer, data]);
+
+  React.useEffect(() => {
+    if (focusedProfileId) {
+      setSelectedProfileIdForDrawer(focusedProfileId);
+      setDrawerDefaultTab('overview');
+      onClearFocusedProfile?.();
+    }
+  }, [focusedProfileId, onClearFocusedProfile]);
 
   // Outreach & Quotation Modal State
   const [showOutreachComposer, setShowOutreachComposer] = useState(false);
@@ -376,7 +396,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
           email: row['Email'] || row.email || '',
           bioLink: row['Link Bio'] || row.bioLink || '',
           bio: row['Bio'] || row.bio || '',
-          profilePic: row['Avatar'] || row.profilePic || '',
+          profilePic: row['Avatar'] || row['Link ảnh'] || row.profilePic || '',
           platform: row['Platform'] || row.platform || 'TikTok',
           profileType: row['Profile'] || 'Individual',
           tier: row['Tier'] ? String(row['Tier']).split(',').map((s: string) => s.trim()).filter(Boolean) : [],
@@ -427,7 +447,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
           email: row['Email'] || row['email'] || '',
           bioLink: row['Link Bio'] || row['bioLink'] || '',
           bio: row['Tiểu sử (Bio)'] || row['bio'] || row['Bio'] || '',
-          profilePic: row['Link ảnh'] || row['profilePic'] || row['Avatar'] || '',
+          profilePic: cleanAvatarUrl(row['Link ảnh'] || row['profilePic'] || row['Avatar'] || ''),
           platform: row['Platform'] || row['platform'] || 'TikTok',
           profileType: row['Profile'] || row['profileType'] || 'Individual',
           tier: (row['Tier'] ? String(row['Tier']).split(',').map((s: string) => s.trim()).filter(Boolean) : []) as Tier[],
@@ -487,6 +507,7 @@ export function ScoutCRM({ data, onUpdateData, webhookUrl, theme, onRefreshProfi
       'Link': row.url,
       'Bio': row.bio || '',
       'Avatar': row.profilePic || '',
+      'Link ảnh': row.profilePic || '',
       'Profile': row.profileType || 'Individual',
       'Tier': row.tier.join(', '),
       'Vị trí': row.location.join(', '),

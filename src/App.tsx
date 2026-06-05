@@ -8,6 +8,7 @@ import { Radar, Database, Menu, X, Sun, Moon, Settings, Briefcase, Sparkles, Key
 import { fetchFromSheet } from './lib/api';
 import { hydrateRestoredProfile, mergeProfileBatch } from './lib/profileChangeDetection';
 import { ToastContainer } from './components/ui/Toast';
+import { cleanAvatarUrl } from './lib/utils';
 
 type ExtractorPrefillRequest = {
   id: string;
@@ -39,6 +40,7 @@ export default function App() {
   const [hasLoadedRestoredData, setHasLoadedRestoredData] = useState(false);
   const [extractorPrefillRequest, setExtractorPrefillRequest] = useState<ExtractorPrefillRequest | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [focusedCRMProfileId, setFocusedCRMProfileId] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window !== 'undefined') {
       return (localStorage.getItem('scout_hub_theme') as 'light' | 'dark') || 'dark';
@@ -226,6 +228,9 @@ export default function App() {
           
           const profile = JSON.parse(decodedString);
           if (profile && profile.url) {
+            if (profile.profilePic) {
+              profile.profilePic = cleanAvatarUrl(profile.profilePic);
+            }
             const queueKey = 'scout_hub_extractor_queue_v1';
             let currentQueue: any[] = [];
             const savedQueue = localStorage.getItem(queueKey);
@@ -505,6 +510,8 @@ export default function App() {
               theme={theme}
               onRefreshProfiles={handleRefreshProfiles}
               projectName={projectName}
+              focusedProfileId={focusedCRMProfileId}
+              onClearFocusedProfile={() => setFocusedCRMProfileId(null)}
             />
           )}
           {activeTab === 'execution' && !selectedCampaignId && (
@@ -552,14 +559,29 @@ export default function App() {
                   const newProfiles = profileIds.map(pId => {
                     const existing = prev.find(ep => ep.campaignId === campId && ep.profileId === pId);
                     if (existing) return existing;
+                    
+                    // Priority 1.2: Pre-fill from CRM rateHistory
+                    const crmProfile = restoredData.find(p => p.id === pId);
+                    let prefilledSOW: any[] = [];
+                    let prefilledCost = 0;
+                    if (crmProfile && crmProfile.rateHistory && crmProfile.rateHistory.length > 0) {
+                      // Get newest rate history entry
+                      const sortedHistory = [...crmProfile.rateHistory].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                      const latestRate = sortedHistory[0];
+                      if (latestRate) {
+                        prefilledSOW = latestRate.sow || [];
+                        prefilledCost = latestRate.price || 0;
+                      }
+                    }
+
                     return {
                       id: `ep_${Math.random().toString(36).substring(7)}`,
                       campaignId: campId,
                       profileId: pId,
                       phase: 'connecting' as const,
                       connectingStatus: 'pending_quote' as const,
-                      confirmedSOW: [],
-                      totalCost: 0,
+                      confirmedSOW: prefilledSOW,
+                      totalCost: prefilledCost,
                       currency: 'VND',
                       paymentTerm: '',
                       confirmMessageRaw: '',
@@ -650,12 +672,32 @@ export default function App() {
                         updatedCampaigns = updatedCampaigns.filter(c => c !== campaignTag);
                       }
 
+                      // Price Sync Engine
+                      const oldProfile = executionProfiles.find(ep => ep.id === updatedProfile.id);
+                      const sowChanged = JSON.stringify(oldProfile?.confirmedSOW || []) !== JSON.stringify(updatedProfile.confirmedSOW || []);
+                      
+                      let newRateHistory = p.rateHistory || [];
+                      if (sowChanged && updatedProfile.totalCost && updatedProfile.totalCost > 0) {
+                        newRateHistory = [...newRateHistory, {
+                          id: Math.random().toString(36).substring(7),
+                          date: new Date().toISOString(),
+                          sow: (updatedProfile.confirmedSOW || []).map(item => item.name),
+                          price: updatedProfile.totalCost,
+                          note: `Confirmed via Execution - ${campaignTag}`
+                        }];
+                      }
+
                       return {
                         ...p,
                         workflowStatus,
                         outreachStatus,
                         projectName: brandName || p.projectName,
                         campaign: updatedCampaigns,
+                        rateHistory: newRateHistory,
+                        executionPhase: updatedProfile.phase,
+                        executionStatus: currentStatus,
+                        confirmedCost: updatedProfile.totalCost,
+                        confirmedSOW: JSON.stringify(updatedProfile.confirmedSOW || []),
                         lastChangedAt: new Date().toISOString()
                       };
                     }
@@ -663,6 +705,10 @@ export default function App() {
                   }));
                 }}
                 onUpdateCRMProfile={handleUpdateCRMProfile}
+                onJumpToCRM={(profileId) => {
+                  setFocusedCRMProfileId(profileId);
+                  setActiveTab('crm');
+                }}
                 onBack={() => setSelectedCampaignId(null)}
                 theme={theme}
               />
@@ -836,7 +882,8 @@ function doPost(e) {
         case "Link Bio": return p.bioLink || '';
         case "Link": return p.url || '';
         case "Bio": return p.bio || '';
-        case "Avatar": return p.profilePic || '';
+        case "Avatar": 
+        case "Link ảnh": return p.profilePic || '';
         case "Profile": return p.profileType || 'Individual';
         case "Tier": return (p.tier || []).join(', ');
         case "Vị trí": return (p.location || []).join(', ');

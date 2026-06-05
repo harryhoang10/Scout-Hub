@@ -31,6 +31,7 @@ export default function CampaignManager({
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showProfileSelector, setShowProfileSelector] = useState<string | null>(null); // campaignId
+  const [sortBy, setSortBy] = useState<'date-desc' | 'budget-desc' | 'budget-asc' | 'kol-count' | 'burn-rate'>('date-desc');
   
   // Form states for new campaign
   const [newCampaignName, setNewCampaignName] = useState('');
@@ -52,6 +53,13 @@ export default function CampaignManager({
   }, [crmProfiles]);
 
   const [brandSelectMode, setBrandSelectMode] = useState<'select' | 'text'>(crmBrands.length > 0 ? 'select' : 'text');
+
+  // Get unique campaign names from crmProfiles
+  const crmCampaignNames = React.useMemo(() => {
+    return Array.from(new Set(crmProfiles.flatMap(p => p.campaign || []).filter(Boolean))) as string[];
+  }, [crmProfiles]);
+
+  const [campaignNameMode, setCampaignNameMode] = useState<'select' | 'text'>(crmCampaignNames.length > 0 ? 'select' : 'text');
 
   // Editable Charge Code states
   const [editingChargeCodeId, setEditingChargeCodeId] = useState<string | null>(null);
@@ -111,27 +119,69 @@ export default function CampaignManager({
     setEditingChargeCodeId(null);
   };
 
-  // Filter campaigns
-  const filteredCampaigns = campaigns.filter(c => 
-    c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    c.brand.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    c.chargeCode.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Filter & Sort campaigns
+  const filteredCampaigns = React.useMemo(() => {
+    const filtered = campaigns.filter(c => 
+      c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.brand.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.chargeCode.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    return filtered.sort((a, b) => {
+      const aProfiles = executionProfiles.filter(ep => ep.campaignId === a.id);
+      const bProfiles = executionProfiles.filter(ep => ep.campaignId === b.id);
+      
+      const aSpent = aProfiles.reduce((sum, ep) => sum + (ep.totalCost || 0), 0);
+      const bSpent = bProfiles.reduce((sum, ep) => sum + (ep.totalCost || 0), 0);
+
+      switch (sortBy) {
+        case 'budget-desc':
+          return (b.budget || 0) - (a.budget || 0);
+        case 'budget-asc':
+          return (a.budget || 0) - (b.budget || 0);
+        case 'kol-count':
+          return bProfiles.length - aProfiles.length;
+        case 'burn-rate': {
+          const aRate = a.budget ? aSpent / a.budget : 0;
+          const bRate = b.budget ? bSpent / b.budget : 0;
+          return bRate - aRate;
+        }
+        case 'date-desc':
+        default:
+          return new Date(b.startDate || b.createdAt || 0).getTime() - new Date(a.startDate || a.createdAt || 0).getTime();
+      }
+    });
+  }, [campaigns, executionProfiles, searchTerm, sortBy]);
 
   return (
     <div className="space-y-6">
       {/* Top Header Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        {/* Search Input */}
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Tìm kiếm chiến dịch, nhãn hàng, charge code..."
-            className={`w-full pl-10 pr-4 py-2.5 text-sm rounded-xl border focus:outline-none focus:ring-2 focus:ring-violet-500/20 transition-all ${inputBg}`}
-          />
+        {/* Search Input & Sort */}
+        <div className="flex flex-1 flex-col sm:flex-row gap-3 max-w-2xl">
+          <div className="relative flex-1">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Tìm kiếm chiến dịch, nhãn hàng, charge code..."
+              className={`w-full pl-10 pr-4 py-2.5 text-sm rounded-xl border focus:outline-none focus:ring-2 focus:ring-violet-500/20 transition-all ${inputBg}`}
+            />
+          </div>
+          
+          {/* Sorting Option */}
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as any)}
+            className={`px-3 py-2.5 text-sm rounded-xl border focus:outline-none focus:ring-2 focus:ring-violet-500/20 cursor-pointer ${inputBg}`}
+          >
+            <option value="date-desc">📅 Mới nhất</option>
+            <option value="budget-desc">💰 Ngân sách: Cao ➔ Thấp</option>
+            <option value="budget-asc">💰 Ngân sách: Thấp ➔ Cao</option>
+            <option value="kol-count">👥 Số lượng KOLs</option>
+            <option value="burn-rate">🔥 Tốc độ chi tiêu (Burn rate)</option>
+          </select>
         </div>
 
         {/* Action Button */}
@@ -415,14 +465,57 @@ export default function CampaignManager({
               {/* Campaign Name */}
               <div className="space-y-1">
                 <label className={`text-xs font-bold uppercase tracking-wider ${textSecondary}`}>Tên chiến dịch *</label>
-                <input
-                  type="text"
-                  required
-                  value={newCampaignName}
-                  onChange={e => setNewCampaignName(e.target.value)}
-                  placeholder="Ví dụ: Chiến dịch Tết Nguyên Đán 2026"
-                  className={`w-full px-3 py-2 text-sm rounded-xl border focus:outline-none focus:ring-2 focus:ring-violet-500/30 ${inputBg}`}
-                />
+                {campaignNameMode === 'select' ? (
+                  <select
+                    value={newCampaignName}
+                    onChange={e => {
+                      if (e.target.value === '__new__') {
+                        setCampaignNameMode('text');
+                        setNewCampaignName('');
+                      } else {
+                        const val = e.target.value;
+                        setNewCampaignName(val);
+                        // Auto-fill brand if we find a CRM profile with this campaign
+                        const matchedProfile = crmProfiles.find(p => p.campaign && p.campaign.includes(val) && p.projectName);
+                        if (matchedProfile && matchedProfile.projectName) {
+                          setNewBrand(matchedProfile.projectName);
+                          setBrandSelectMode('select');
+                        }
+                      }
+                    }}
+                    className={`w-full px-3 py-2.5 text-sm rounded-xl border focus:outline-none focus:ring-2 focus:ring-violet-500/30 ${inputBg}`}
+                    required
+                  >
+                    <option value="">-- Chọn chiến dịch từ CRM --</option>
+                    {crmCampaignNames.map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                    <option value="__new__">➕ Nhập tên chiến dịch mới...</option>
+                  </select>
+                ) : (
+                  <div className="relative">
+                    <input
+                      type="text"
+                      required
+                      value={newCampaignName}
+                      onChange={e => setNewCampaignName(e.target.value)}
+                      placeholder="Ví dụ: Chiến dịch Tết Nguyên Đán 2026"
+                      className={`w-full px-3 py-2 text-sm rounded-xl border focus:outline-none focus:ring-2 focus:ring-violet-500/30 ${inputBg}`}
+                    />
+                    {crmCampaignNames.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCampaignNameMode('select');
+                          setNewCampaignName(crmCampaignNames[0] || '');
+                        }}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-violet-500 hover:text-violet-400 cursor-pointer"
+                      >
+                        Chọn từ CRM
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Brand & Charge Code Row */}

@@ -1040,6 +1040,7 @@ Bio để phân tích:
       'Link Bio': l.bioLink || '',
       'Link': l.url,
       'Bio': l.bio || '',
+      'Link ảnh': l.profilePic || '',
       'Contact Source': l.contactSource || '',
       'Contact Warnings': (l.contactWarnings || []).join(' | '),
       'Cache': l.cacheHit ? `Yes (${l.cacheSource || 'unknown'})` : '',

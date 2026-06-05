@@ -103,6 +103,11 @@ function normalizeCacheUrl(url: string) {
   }
 }
 
+function cleanAvatarUrl(url: string): string {
+  if (!url) return '';
+  return url.trim();
+}
+
 function createScrapeCacheKey(platform: 'tiktok' | 'facebook', url: string, variant = 'default') {
   return `${platform}:${variant}:${normalizeCacheUrl(url)}`;
 }
@@ -643,7 +648,7 @@ app.use(express.json({ limit: '10mb' }));
                 following: stats.followingCount || stats.following_count || 0,
                 followers: stats.followerCount || stats.follower_count || 0,
                 likes: stats.heartCount || stats.heart_count || stats.heart || 0,
-                profilePic: user.avatarLarger || user.avatarMedium || user.avatarThumb || '',
+                profilePic: cleanAvatarUrl(user.avatarLarger || user.avatarMedium || user.avatarThumb || ''),
                 nickname: user.nickname || '',
                 bioLink: contact.bioLink,
                 email: contact.email,
@@ -731,7 +736,7 @@ app.use(express.json({ limit: '10mb' }));
                   following: stats.followingCount || 0,
                   followers: stats.followerCount || 0,
                   likes: stats.heartCount || 0,
-                  profilePic: user.avatarLarger || user.avatarMedium || '',
+                  profilePic: cleanAvatarUrl(user.avatarLarger || user.avatarMedium || ''),
                   nickname: user.nickname || '',
                   bioLink: contact.bioLink,
                   email: contact.email,
@@ -939,7 +944,7 @@ app.use(express.json({ limit: '10mb' }));
       const payload = {
         title,
         description,
-        profilePic,
+        profilePic: cleanAvatarUrl(profilePic),
         nickname,
         followers,
         url: fetchUrl,

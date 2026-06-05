@@ -17,6 +17,7 @@ interface ExecutionKanbanProps {
   crmProfiles: RestoredData[];
   onUpdateExecutionProfile: (updatedProfile: ExecutionProfile) => void;
   onUpdateCRMProfile?: (profileId: string, field: keyof RestoredData, value: any) => void;
+  onJumpToCRM?: (profileId: string) => void;
   onBack: () => void;
   theme: 'light' | 'dark';
 }
@@ -78,6 +79,7 @@ export default function ExecutionKanban({
   crmProfiles,
   onUpdateExecutionProfile,
   onUpdateCRMProfile,
+  onJumpToCRM,
   onBack,
   theme
 }: ExecutionKanbanProps) {
@@ -88,7 +90,20 @@ export default function ExecutionKanban({
 
   // States
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
-  const [detailTab, setDetailTab] = useState<'overview' | 'paperwork' | 'wrapping' | 'followup'>('overview');
+  const [detailTab, setDetailTab] = useState<'overview' | 'paperwork' | 'wrapping' | 'followup' | 'activity'>('overview');
+  
+  const getDeadlineStatus = (deadlineStr?: string, isAired?: boolean) => {
+    if (!deadlineStr || isAired) return 'normal';
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const deadline = new Date(deadlineStr);
+    deadline.setHours(0,0,0,0);
+    const diffTime = deadline.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    if (diffDays < 0) return 'overdue';
+    if (diffDays <= 3) return 'warning';
+    return 'normal';
+  };
   const [timelineCollapsed, setTimelineCollapsed] = useState(false);
   const [draggedOverColumn, setDraggedOverColumn] = useState<'connecting' | 'launching' | 'wrapping' | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -143,6 +158,16 @@ export default function ExecutionKanban({
       updated.wrappingStatus = 'pending_payment';
     }
     updated.updatedAt = new Date().toISOString();
+
+    // Record activity log
+    const newActivityLog = [...(profile.activityLog || [])];
+    newActivityLog.push({
+      id: `act_${Math.random().toString(36).substring(7)}`,
+      action: `Chuyển phase từ ${profile.phase.toUpperCase()} sang ${newPhase.toUpperCase()}`,
+      timestamp: new Date().toISOString()
+    });
+    updated.activityLog = newActivityLog;
+
     onUpdateExecutionProfile(updated);
   };
 
@@ -229,6 +254,11 @@ export default function ExecutionKanban({
   // Handle updates inside the slide-in detail panel
   const handleFieldChange = (key: keyof ExecutionProfile, value: any) => {
     if (!activeProfile) return;
+    const oldVal = activeProfile[key];
+    
+    // Check if value changed
+    if (JSON.stringify(oldVal) === JSON.stringify(value)) return;
+
     let updated = { 
       ...activeProfile, 
       [key]: value 
@@ -241,7 +271,44 @@ export default function ExecutionKanban({
     }
 
     // Trigger Auto-Status Engine
+    const prevPhase = activeProfile.phase;
     updated = runAutoStatusEngine(updated);
+    
+    // Record activity log
+    const newActivityLog = [...(activeProfile.activityLog || [])];
+    
+    let actionDesc = '';
+    if (key === 'phase' || updated.phase !== prevPhase) {
+      actionDesc = `Chuyển phase từ ${prevPhase.toUpperCase()} sang ${updated.phase.toUpperCase()}`;
+    } else if (key === 'connectingStatus') {
+      actionDesc = `Cập nhật trạng thái Connecting: ${value}`;
+    } else if (key === 'launchingStatus') {
+      actionDesc = `Cập nhật trạng thái Launching: ${value}`;
+    } else if (key === 'wrappingStatus') {
+      actionDesc = `Cập nhật trạng thái Wrapping: ${value}`;
+    } else if (key === 'confirmedSOW') {
+      actionDesc = `Cập nhật hạng mục công việc SOW (${value.length} hạng mục)`;
+    } else if (key === 'totalCost') {
+      actionDesc = `Thay đổi chi phí chốt: ${value.toLocaleString('vi-VN')} đ`;
+    } else if (key === 'contentDeadline') {
+      actionDesc = `Cập nhật Hạn nộp content: ${value}`;
+    } else if (key === 'publishedLinks') {
+      actionDesc = `Cập nhật danh sách bài đăng đã air (${value.length} bài đăng)`;
+    } else if (key === 'invoiceNumber') {
+      actionDesc = `Cập nhật Số hóa đơn: ${value}`;
+    } else if (key === 'actualPaymentDate') {
+      actionDesc = `Xác nhận ngày thực tế đi tiền: ${value}`;
+    } else {
+      actionDesc = `Cập nhật thông tin ${String(key)}`;
+    }
+
+    newActivityLog.push({
+      id: `act_${Math.random().toString(36).substring(7)}`,
+      action: actionDesc,
+      timestamp: new Date().toISOString()
+    });
+
+    updated.activityLog = newActivityLog;
     
     onUpdateExecutionProfile(updated);
   };
@@ -416,6 +483,7 @@ export default function ExecutionKanban({
         'Nền tảng': crm?.platform || 'N/A',
         'SĐT liên hệ': crm?.phone || 'Chưa có',
         'Email liên hệ': crm?.email || 'Chưa có',
+        'Link ảnh': crm?.profilePic || '',
         'Phase hiện tại': p.phase.toUpperCase(),
         'Trạng thái': statusLabel,
         'Hạng mục (SOW)': SOWText,
@@ -442,6 +510,7 @@ export default function ExecutionKanban({
       { wch: 10 },  // Nền tảng
       { wch: 15 },  // SĐT
       { wch: 22 },  // Email
+      { wch: 25 },  // Link ảnh
       { wch: 15 },  // Phase
       { wch: 15 },  // Trạng thái
       { wch: 35 },  // SOW
@@ -639,6 +708,13 @@ export default function ExecutionKanban({
                       </span>
                       <div className="flex items-center gap-1 text-slate-500">
                         <button
+                          onClick={() => onJumpToCRM?.(profile.profileId)}
+                          className={`p-1 rounded-md hover:bg-slate-500/10 hover:text-violet-400 transition-colors`}
+                          title="Xem thông tin chi tiết ở CRM"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </button>
+                        <button
                           onClick={() => setShowMessageGen(profile.id)}
                           className={`p-1 rounded-md hover:bg-slate-500/10 hover:text-violet-400 transition-colors`}
                           title="Soạn tin nhắn"
@@ -715,6 +791,13 @@ export default function ExecutionKanban({
                 const crm = crmProfiles.find(cp => cp.id === profile.profileId);
                 if (!crm) return null;
                 const status = getStatusLabel(profile);
+                
+                const dlStatus = getDeadlineStatus(profile.contentDeadline, profile.launchingStatus === 'aired');
+                const dlBorderClass = dlStatus === 'overdue' 
+                  ? 'border-rose-500 bg-rose-500/[0.01] shadow-sm animate-pulse-slow' 
+                  : dlStatus === 'warning' 
+                  ? 'border-amber-500 bg-amber-500/[0.01]' 
+                  : cardBg;
 
                 return (
                   <div
@@ -732,7 +815,7 @@ export default function ExecutionKanban({
                       setSelectedProfileId(profile.id);
                       setDetailTab('paperwork');
                     }}
-                    className={`rounded-xl border p-4 transition-all duration-200 cursor-pointer ${cardBg} ${
+                    className={`rounded-xl border p-4 transition-all duration-200 cursor-pointer ${dlBorderClass} ${
                       draggingId === profile.id ? 'opacity-40 scale-95 border-dashed border-amber-500/50' : ''
                     }`}
                   >
@@ -748,7 +831,7 @@ export default function ExecutionKanban({
                           }}
                         />
                       ) : (
-                        <div className="w-9 h-9 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-400 font-bold text-sm">
+                        <div className="w-9 h-9 rounded-full bg-amber-50/20 flex items-center justify-center text-amber-400 font-bold text-sm">
                           {(crm.nickname || crm.channelId || 'K').charAt(0).toUpperCase()}
                         </div>
                       )}
@@ -766,9 +849,15 @@ export default function ExecutionKanban({
                           {profile.contractType ? '✓ Sẵn sàng' : '✗ Chưa làm'}
                         </span>
                       </div>
-                      <div className={`p-1.5 rounded-lg border ${borderColor} ${isDark ? 'bg-white/[0.01]' : 'bg-slate-50'}`}>
-                        <span className={`${textMuted} uppercase text-[8px] font-bold block mb-0.5`}>Deadline bài</span>
-                        <span className={`font-bold ${textPrimary}`}>
+                      <div className={`p-1.5 rounded-lg border ${
+                        dlStatus === 'overdue' 
+                          ? 'border-rose-500/30 bg-rose-500/10 text-rose-500 font-bold' 
+                          : dlStatus === 'warning' 
+                          ? 'border-amber-500/30 bg-amber-500/10 text-amber-500 font-bold animate-pulse-slow' 
+                          : `${borderColor} ${isDark ? 'bg-white/[0.01]' : 'bg-slate-50'}`
+                      }`}>
+                        <span className={`${dlStatus !== 'normal' ? 'text-current' : textMuted} uppercase text-[8px] font-bold block mb-0.5`}>Deadline bài</span>
+                        <span className={`font-bold ${dlStatus !== 'normal' ? 'text-current' : textPrimary}`}>
                           {profile.contentDeadline ? new Date(profile.contentDeadline).toLocaleDateString('vi-VN', {month: 'numeric', day: 'numeric'}) : 'Chưa set'}
                         </span>
                       </div>
@@ -794,6 +883,13 @@ export default function ExecutionKanban({
                           title="Trở lại Connecting"
                         >
                           <ArrowLeft className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => onJumpToCRM?.(profile.profileId)}
+                          className={`p-1 rounded-md hover:bg-slate-500/10 hover:text-violet-400 transition-colors`}
+                          title="Xem thông tin chi tiết ở CRM"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
                         </button>
                         <button
                           onClick={() => {
@@ -944,6 +1040,13 @@ export default function ExecutionKanban({
                         >
                           <ArrowLeft className="h-3.5 w-3.5" />
                         </button>
+                        <button
+                          onClick={() => onJumpToCRM?.(profile.profileId)}
+                          className={`p-1 rounded-md hover:bg-slate-500/10 hover:text-violet-400 transition-colors`}
+                          title="Xem thông tin chi tiết ở CRM"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </button>
                         <span className="text-[10px] text-slate-500 font-semibold italic">Wrapping</span>
                       </div>
                     </div>
@@ -1074,7 +1177,8 @@ export default function ExecutionKanban({
                 { id: 'overview' as const, label: 'Connecting (SOW)' },
                 { id: 'paperwork' as const, label: 'Paperwork (Launching)' },
                 { id: 'wrapping' as const, label: 'Wrapping (Tiền & HĐ)' },
-                { id: 'followup' as const, label: 'Follow-ups' }
+                { id: 'followup' as const, label: 'Follow-ups' },
+                { id: 'activity' as const, label: 'Nhật ký' }
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -1137,7 +1241,15 @@ export default function ExecutionKanban({
 
                   {/* SOW Builder */}
                   <div className="space-y-3">
-                    <label className={`text-[10px] font-bold uppercase tracking-wider ${textSecondary}`}>Danh sách công việc (SOW)</label>
+                    <div className="flex items-center justify-between">
+                      <label className={`text-[10px] font-bold uppercase tracking-wider ${textSecondary}`}>Danh sách công việc (SOW)</label>
+                      {activeProfile.confirmedSOW.length > 0 && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-500 text-[9px] font-bold" title="Đã tự động đồng bộ về Lịch sử báo giá trong CRM">
+                          <Check className="h-2.5 w-2.5" />
+                          Synced to CRM
+                        </span>
+                      )}
+                    </div>
                     
                     {/* SOW Items */}
                     <div className="space-y-2">
@@ -1548,6 +1660,40 @@ export default function ExecutionKanban({
                 </div>
               )}
 
+              {/* === TAB 5: LỊCH SỬ HOẠT ĐỘNG === */}
+              {detailTab === 'activity' && (
+                <div className="space-y-4">
+                  <label className={`text-[10px] font-bold uppercase tracking-wider ${textSecondary}`}>Nhật ký hoạt động thực thi</label>
+                  <div className="relative pl-6 border-l border-violet-500/20 space-y-4 py-2">
+                    {((activeProfile.activityLog || [])).slice().reverse().map((act) => (
+                      <div key={act.id} className="relative">
+                        {/* Dot indicator */}
+                        <div className="absolute -left-[29px] top-1 w-2.5 h-2.5 rounded-full bg-violet-500 border-2 border-white dark:border-[#0f0f15]" />
+                        
+                        <div className="text-xs">
+                          <p className={`font-bold ${textPrimary}`}>{act.action}</p>
+                          <p className={`text-[9px] ${textMuted} mt-0.5`}>
+                            {new Date(act.timestamp).toLocaleString('vi-VN')}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+
+                    {(!activeProfile.activityLog || activeProfile.activityLog.length === 0) && (
+                      <div className="relative">
+                        <div className="absolute -left-[29px] top-1 w-2.5 h-2.5 rounded-full bg-slate-500 border-2 border-white dark:border-[#0f0f15]" />
+                        <div className="text-xs">
+                          <p className={`font-semibold ${textSecondary}`}>Chưa ghi nhận hoạt động nào.</p>
+                          <p className={`text-[9px] ${textMuted} mt-0.5`}>
+                            Hệ thống sẽ tự động ghi chép nhật ký khi có thay đổi trạng thái, SOW hoặc thông tin liên hệ.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
             </div>
 
             {/* General meta notes footer in detail panel */}
@@ -1732,6 +1878,7 @@ export default function ExecutionKanban({
             campaign={campaign}
             profile={targetProfile}
             crmProfile={targetCRMProfile}
+            onUpdateCRMProfile={onUpdateCRMProfile}
             onClose={() => setShowContractGen(null)}
             theme={theme}
           />

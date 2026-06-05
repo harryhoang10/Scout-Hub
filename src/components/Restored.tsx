@@ -6,7 +6,7 @@ import { Input } from './ui/input';
 import { TagInput } from './ui/tag-input';
 import * as XLSX from 'xlsx';
 import { RestoredData } from '../types';
-import { cn } from '../lib/utils';
+import { cn, cleanAvatarUrl } from '../lib/utils';
 import { showToast } from './ui/Toast';
 
 interface RestoredProps {
@@ -56,7 +56,7 @@ export function Restored({ data, onUpdateData }: RestoredProps) {
           const email = row['Email'] || row['email'] || '';
           const bioLink = row['Link Bio'] || row['bioLink'] || '';
           const bio = row['Tiểu sử (Bio)'] || row['bio'] || row['Bio'] || '';
-          const profilePic = row['Link ảnh'] || row['profilePic'] || row['Avatar'] || '';
+          const profilePic = cleanAvatarUrl(row['Link ảnh'] || row['profilePic'] || row['Avatar'] || '');
           const platform = row['Platform'] || row['platform'] || (url.includes('facebook.com') ? 'Facebook' : 'TikTok');
           const profileType = row['Profile'] || row['profileType'] || 'Individual';
           
