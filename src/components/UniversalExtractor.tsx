@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Upload, FileDown, Trash2, Link as LinkIcon, Globe, Play, Save, CheckCircle, AlertCircle, Loader2, Send, RotateCcw, RefreshCw, Filter, Bookmark, X, Star, Briefcase } from 'lucide-react';
+import { Upload, FileDown, Trash2, Link as LinkIcon, Globe, Play, Save, CheckCircle, AlertCircle, Loader2, Send, RotateCcw, RefreshCw, Filter, Bookmark, X, Star, Briefcase, Copy } from 'lucide-react';
 import { ProfileData, RestoredData, Tier } from '../types';
 import * as XLSX from 'xlsx';
 import { upsertToSheet } from '../lib/api';
@@ -1040,7 +1040,7 @@ Bio để phân tích:
       'Link Bio': l.bioLink || '',
       'Link': l.url,
       'Bio': l.bio || '',
-      'Link ảnh': l.profilePic || '',
+      'Link ảnh': l.profilePic ? `${window.location.origin}/api/proxy-image/avatar.jpg?url=${encodeURIComponent(l.profilePic)}` : '',
       'Contact Source': l.contactSource || '',
       'Contact Warnings': (l.contactWarnings || []).join(' | '),
       'Cache': l.cacheHit ? `Yes (${l.cacheSource || 'unknown'})` : '',
@@ -1054,6 +1054,51 @@ Bio để phân tích:
 
   const clearAll = () => { setLinks([]); };
   const removeLink = (id: string) => { setLinks(prev => prev.filter(l => l.id !== id)); };
+
+  const handleCopyRow = (link: any) => {
+    const vals = [
+      link.platform || 'TikTok',
+      link.nickname || '',
+      link.channelId || '',
+      link.followers ? String(link.followers) : '',
+      link.averageView ? String(link.averageView) : '',
+      link.averageEngagement ? String(link.averageEngagement) : '',
+      link.phone || '',
+      link.email || '',
+      link.bioLink || '',
+      link.url || '',
+      link.bio || '',
+      link.aiAnalysis || '',
+    ];
+    navigator.clipboard.writeText(vals.join('\t'));
+    showToast(`Đã copy dòng "${link.nickname || link.url}"`, 'success');
+  };
+
+  const handleCopyColumn = (colIndex: number) => {
+    const headers = ['Platform', 'Tên', 'ID', 'Followers', 'Avg View', 'Avg Engage', 'SĐT', 'Email', 'Link Bio', 'Link', 'Bio', 'AI Phân tích'];
+    const header = headers[colIndex];
+    
+    const values = filteredLinks.map(link => {
+      switch (colIndex) {
+        case 0: return link.platform || 'TikTok';
+        case 1: return link.nickname || '';
+        case 2: return link.channelId || '';
+        case 3: return link.followers ? String(link.followers) : '';
+        case 4: return link.averageView ? String(link.averageView) : '';
+        case 5: return link.averageEngagement ? String(link.averageEngagement) : '';
+        case 6: return link.phone || '';
+        case 7: return link.email || '';
+        case 8: return link.bioLink || '';
+        case 9: return link.url || '';
+        case 10: return link.bio || '';
+        case 11: return link.aiAnalysis || '';
+        default: return '';
+      }
+    });
+
+    navigator.clipboard.writeText([header, ...values].join('\n'));
+    showToast(`Đã copy cột "${header}" (${values.length} dòng)`, 'success');
+  };
   const successCount = links.filter(l => l.status === 'success').length;
   const pendingCount = links.filter(l => l.status === 'pending').length;
   const processingCount = links.filter(l => l.status === 'processing').length;
@@ -1445,18 +1490,78 @@ Bio để phân tích:
             <thead className={`text-[11px] uppercase border-b ${borderC} ${isDark ? 'text-slate-400 bg-white/[0.02]' : 'text-slate-500 bg-slate-50'}`}>
               <tr>
                 <th className="px-3 py-3 font-medium w-10 text-center">#</th>
-                <th className="px-3 py-3 font-medium w-20">Platform</th>
-                <th className="px-3 py-3 font-medium w-36">Tên</th>
-                <th className="px-3 py-3 font-medium w-24">ID</th>
-                <th className="px-3 py-3 font-medium w-24 text-right">Followers</th>
-                <th className="px-3 py-3 font-medium w-24 text-right">Avg View</th>
-                <th className="px-3 py-3 font-medium w-28 text-right">Avg Engage</th>
-                <th className="px-3 py-3 font-medium w-24">SĐT</th>
-                <th className="px-3 py-3 font-medium w-32">Email</th>
-                <th className="px-3 py-3 font-medium w-24">Link Bio</th>
-                <th className="px-3 py-3 font-medium w-44">Link</th>
-                <th className="px-3 py-3 font-medium w-40">Bio</th>
-                <th className="px-3 py-3 font-medium w-48">AI Phân tích</th>
+                <th className="px-3 py-3 font-medium w-20">
+                  <div className="flex items-center justify-between gap-1 group">
+                    <span>Platform</span>
+                    <button onClick={() => handleCopyColumn(0)} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Copy cột Platform"><Copy className="h-3 w-3" /></button>
+                  </div>
+                </th>
+                <th className="px-3 py-3 font-medium w-36">
+                  <div className="flex items-center justify-between gap-1 group">
+                    <span>Tên</span>
+                    <button onClick={() => handleCopyColumn(1)} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Copy cột Tên"><Copy className="h-3 w-3" /></button>
+                  </div>
+                </th>
+                <th className="px-3 py-3 font-medium w-24">
+                  <div className="flex items-center justify-between gap-1 group">
+                    <span>ID</span>
+                    <button onClick={() => handleCopyColumn(2)} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Copy cột ID"><Copy className="h-3 w-3" /></button>
+                  </div>
+                </th>
+                <th className="px-3 py-3 font-medium w-24 text-right">
+                  <div className="flex items-center justify-end gap-1 group">
+                    <span>Followers</span>
+                    <button onClick={() => handleCopyColumn(3)} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Copy cột Followers"><Copy className="h-3 w-3" /></button>
+                  </div>
+                </th>
+                <th className="px-3 py-3 font-medium w-24 text-right">
+                  <div className="flex items-center justify-end gap-1 group">
+                    <span>Avg View</span>
+                    <button onClick={() => handleCopyColumn(4)} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Copy cột Avg View"><Copy className="h-3 w-3" /></button>
+                  </div>
+                </th>
+                <th className="px-3 py-3 font-medium w-28 text-right">
+                  <div className="flex items-center justify-end gap-1 group">
+                    <span>Avg Engage</span>
+                    <button onClick={() => handleCopyColumn(5)} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Copy cột Avg Engage"><Copy className="h-3 w-3" /></button>
+                  </div>
+                </th>
+                <th className="px-3 py-3 font-medium w-24">
+                  <div className="flex items-center justify-between gap-1 group">
+                    <span>SĐT</span>
+                    <button onClick={() => handleCopyColumn(6)} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Copy cột SĐT"><Copy className="h-3 w-3" /></button>
+                  </div>
+                </th>
+                <th className="px-3 py-3 font-medium w-32">
+                  <div className="flex items-center justify-between gap-1 group">
+                    <span>Email</span>
+                    <button onClick={() => handleCopyColumn(7)} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Copy cột Email"><Copy className="h-3 w-3" /></button>
+                  </div>
+                </th>
+                <th className="px-3 py-3 font-medium w-24">
+                  <div className="flex items-center justify-between gap-1 group">
+                    <span>Link Bio</span>
+                    <button onClick={() => handleCopyColumn(8)} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Copy cột Link Bio"><Copy className="h-3 w-3" /></button>
+                  </div>
+                </th>
+                <th className="px-3 py-3 font-medium w-44">
+                  <div className="flex items-center justify-between gap-1 group">
+                    <span>Link</span>
+                    <button onClick={() => handleCopyColumn(9)} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Copy cột Link"><Copy className="h-3 w-3" /></button>
+                  </div>
+                </th>
+                <th className="px-3 py-3 font-medium w-40">
+                  <div className="flex items-center justify-between gap-1 group">
+                    <span>Bio</span>
+                    <button onClick={() => handleCopyColumn(10)} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Copy cột Bio"><Copy className="h-3 w-3" /></button>
+                  </div>
+                </th>
+                <th className="px-3 py-3 font-medium w-48">
+                  <div className="flex items-center justify-between gap-1 group">
+                    <span>AI Phân tích</span>
+                    <button onClick={() => handleCopyColumn(11)} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-violet-400" title="Copy cột AI Phân tích"><Copy className="h-3 w-3" /></button>
+                  </div>
+                </th>
                 <th className="px-3 py-3 font-medium w-12 text-center">Ảnh</th>
                 <th className="px-3 py-3 font-medium w-24 text-center">Trạng thái</th>
               </tr>
@@ -1562,7 +1667,14 @@ Bio để phân tích:
                           {link.retryCount ? ` (${link.retryCount})` : ''}
                         </span>
                       )}
-                      <button onClick={() => removeLink(link.id)} className={`ml-1 ${isDark ? 'text-slate-600 hover:text-red-400' : 'text-slate-300 hover:text-red-500'} transition-colors`}>
+                      <button
+                        onClick={() => handleCopyRow(link)}
+                        className={`ml-1 ${isDark ? 'text-slate-600 hover:text-violet-400' : 'text-slate-300 hover:text-violet-500'} transition-colors`}
+                        title="Copy dòng"
+                      >
+                        <Copy className="h-3 w-3" />
+                      </button>
+                      <button onClick={() => removeLink(link.id)} className={`ml-1.5 ${isDark ? 'text-slate-600 hover:text-red-400' : 'text-slate-300 hover:text-red-500'} transition-colors`}>
                         <Trash2 className="h-3 w-3" />
                       </button>
                     </div>

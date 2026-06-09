@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import {
   Trash2, CopyX, Star, Users, Briefcase, FileDown,
-  LayoutGrid, List, Search, ArrowUpDown, Loader2, Link as LinkIcon, Phone, Mail, Filter, Upload, RefreshCw, X, CheckCircle2, StickyNote, History, ChevronDown, Globe, Bell, BellOff, Eye, Send, MessageSquare
+  LayoutGrid, List, Search, ArrowUpDown, Loader2, Link as LinkIcon, Phone, Mail, Filter, Upload, RefreshCw, X, CheckCircle2, StickyNote, History, ChevronDown, Globe, Bell, BellOff, Eye, EyeOff, Copy, Send, MessageSquare
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { RestoredData, Tier, WorkflowStatus, OutreachStatus, SavedView } from '../types';
@@ -110,6 +110,26 @@ export function ScoutCRM({
   const [quotationTarget, setQuotationTarget] = useState<RestoredData | null>(null);
   const [showKPIDashboard, setShowKPIDashboard] = useState(false);
   const [showCrmToolsDropdown, setShowCrmToolsDropdown] = useState(false);
+
+  // SĐT show/hide toggle state
+  const [showPhone, setShowPhone] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('scout_hub_show_phone');
+      return stored === 'true';
+    } catch (e) {
+      return false;
+    }
+  });
+
+  const toggleShowPhone = () => {
+    setShowPhone(prev => {
+      const newValue = !prev;
+      try {
+        localStorage.setItem('scout_hub_show_phone', String(newValue));
+      } catch (e) {}
+      return newValue;
+    });
+  };
 
   // Campaign Fit Score & Saved Views State
   const [scoreBreakdownProfileId, setScoreBreakdownProfileId] = useState<string | null>(null);
@@ -506,8 +526,8 @@ export function ScoutCRM({
       'Link Bio': row.bioLink || '',
       'Link': row.url,
       'Bio': row.bio || '',
-      'Avatar': row.profilePic || '',
-      'Link ảnh': row.profilePic || '',
+      'Avatar': row.profilePic ? `${window.location.origin}/api/proxy-image/avatar.jpg?url=${encodeURIComponent(row.profilePic)}` : '',
+      'Link ảnh': row.profilePic ? `${window.location.origin}/api/proxy-image/avatar.jpg?url=${encodeURIComponent(row.profilePic)}` : '',
       'Profile': row.profileType || 'Individual',
       'Tier': row.tier.join(', '),
       'Vị trí': row.location.join(', '),
@@ -1599,7 +1619,20 @@ export function ScoutCRM({
                   <th className="px-3 py-3 font-medium w-24 text-right">Avg View</th>
                   <th className="px-3 py-3 font-medium w-24 text-right">Avg Engage</th>
                   <th className="px-3 py-3 font-medium w-24 text-center">Độ phù hợp</th>
-                  <th className="px-3 py-3 font-medium w-24 text-center">Liên hệ</th>
+                  <th className="px-3 py-3 font-medium w-36 text-center">
+                    <div className="flex items-center justify-center gap-1.5">
+                      <span>Liên hệ</span>
+                      <button
+                        onClick={toggleShowPhone}
+                        className={`p-1 rounded transition-all active:scale-95 ${
+                          isDark ? 'hover:bg-white/10 text-slate-400 hover:text-slate-200' : 'hover:bg-slate-100 text-slate-500 hover:text-slate-700'
+                        }`}
+                        title={showPhone ? "Ẩn số điện thoại và email" : "Hiện số điện thoại và email"}
+                      >
+                        {showPhone ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
+                  </th>
                   <th className="px-3 py-3 font-medium w-20 text-center">Zalo</th>
                   <th className="px-3 py-3 font-medium min-w-[110px]">Workflow</th>
                   <th className="px-3 py-3 font-medium min-w-[120px]">Chủ đề (Niche)</th>
@@ -1664,24 +1697,54 @@ export function ScoutCRM({
                       {renderFitScoreBadge(row)}
                     </td>
                     <td className="px-3 py-3 text-center">
-                      <div className="flex items-center justify-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex flex-col items-center justify-center gap-1" onClick={(e) => e.stopPropagation()}>
                         {row.phone && row.phone !== 'N/A' && row.phone !== '-' ? (
-                          <button
-                            onClick={() => handleCopy(row.phone || '', 'SĐT')}
-                            className={`p-1 rounded-md border ${isDark ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20' : 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'}`}
-                            title={`Copy SĐT: ${row.phone}`}
-                          >
-                            <Phone className="h-3 w-3" />
-                          </button>
+                          showPhone ? (
+                            <div className="flex items-center gap-1">
+                              <span className={`font-mono text-xs font-semibold ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                                {row.phone}
+                              </span>
+                              <button
+                                onClick={() => handleCopy(row.phone || '', 'SĐT')}
+                                className={`p-0.5 rounded transition-colors ${isDark ? 'hover:bg-white/10 text-slate-400 hover:text-slate-200' : 'hover:bg-slate-100 text-slate-500 hover:text-slate-700'}`}
+                                title={`Copy SĐT: ${row.phone}`}
+                              >
+                                <Copy className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => handleCopy(row.phone || '', 'SĐT')}
+                              className={`p-1 rounded-md border ${isDark ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20' : 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'}`}
+                              title={`Copy SĐT: ${row.phone}`}
+                            >
+                              <Phone className="h-3 w-3" />
+                            </button>
+                          )
                         ) : '-'}
                         {row.email && row.email !== 'N/A' && row.email !== '-' ? (
-                          <button
-                            onClick={() => handleCopy(row.email || '', 'Email')}
-                            className={`p-1 rounded-md border ${isDark ? 'bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20' : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'}`}
-                            title={`Copy Email: ${row.email}`}
-                          >
-                            <Mail className="h-3 w-3" />
-                          </button>
+                          showPhone ? (
+                            <div className="flex items-center gap-1">
+                              <span className={`text-[10px] truncate max-w-[90px] font-medium ${isDark ? 'text-amber-400' : 'text-amber-600'}`} title={row.email}>
+                                {row.email}
+                              </span>
+                              <button
+                                onClick={() => handleCopy(row.email || '', 'Email')}
+                                className={`p-0.5 rounded transition-colors ${isDark ? 'hover:bg-white/10 text-slate-400 hover:text-slate-200' : 'hover:bg-slate-100 text-slate-500 hover:text-slate-700'}`}
+                                title={`Copy Email: ${row.email}`}
+                              >
+                                <Copy className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => handleCopy(row.email || '', 'Email')}
+                              className={`p-1 rounded-md border ${isDark ? 'bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20' : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'}`}
+                              title={`Copy Email: ${row.email}`}
+                            >
+                              <Mail className="h-3 w-3" />
+                            </button>
+                          )
                         ) : null}
                       </div>
                     </td>

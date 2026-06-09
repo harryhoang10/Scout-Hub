@@ -3,8 +3,9 @@ import { UniversalExtractor } from './components/UniversalExtractor';
 import { ScoutCRM } from './components/ScoutCRM';
 import CampaignManager from './components/execution/CampaignManager';
 import ExecutionKanban from './components/execution/ExecutionKanban';
+import { PerformanceTracker } from './components/PerformanceTracker';
 import { RestoredData, Campaign, ExecutionProfile, WorkflowStatus, OutreachStatus, ConnectingStatus } from './types';
-import { Radar, Database, Menu, X, Sun, Moon, Settings, Briefcase, Sparkles, Key, Layers, BookOpen, ExternalLink, Check, Copy, HelpCircle, Cpu, AlertTriangle, ShieldCheck, ChevronDown, ChevronUp, RefreshCw, Rocket } from 'lucide-react';
+import { Radar, Database, Menu, X, Sun, Moon, Settings, Briefcase, Sparkles, Key, Layers, BookOpen, ExternalLink, Check, Copy, HelpCircle, Cpu, AlertTriangle, ShieldCheck, ChevronDown, ChevronUp, RefreshCw, Rocket, BarChart3 } from 'lucide-react';
 import { fetchFromSheet } from './lib/api';
 import { hydrateRestoredProfile, mergeProfileBatch } from './lib/profileChangeDetection';
 import { ToastContainer } from './components/ui/Toast';
@@ -35,7 +36,7 @@ function parseExtractorIntakeUrls(search: string) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'extractor' | 'crm' | 'execution' | 'settings'>('extractor');
+  const [activeTab, setActiveTab] = useState<'extractor' | 'crm' | 'execution' | 'performance' | 'settings'>('extractor');
   const [restoredData, setRestoredData] = useState<RestoredData[]>([]);
   const [hasLoadedRestoredData, setHasLoadedRestoredData] = useState(false);
   const [extractorPrefillRequest, setExtractorPrefillRequest] = useState<ExtractorPrefillRequest | null>(null);
@@ -376,6 +377,7 @@ export default function App() {
     { id: 'extractor' as const, label: 'Extractor', icon: Radar, desc: 'Trích xuất profile' },
     { id: 'crm' as const, label: 'Scout CRM', icon: Database, desc: `${restoredData.length} profiles` },
     { id: 'execution' as const, label: 'Execution Hub', icon: Rocket, desc: `${campaigns.length} campaigns` },
+    { id: 'performance' as const, label: 'Performance', icon: BarChart3, desc: 'Tracking metrics' },
     { id: 'settings' as const, label: 'Cài đặt', icon: Settings, desc: 'Webhook & API' },
   ];
 
@@ -465,6 +467,8 @@ export default function App() {
                     ? 'Scout CRM' 
                     : activeTab === 'execution'
                     ? 'Execution Hub'
+                    : activeTab === 'performance'
+                    ? 'Performance Tracking'
                     : 'Cài đặt'}
                 </h2>
                 {projectName && (
@@ -483,6 +487,8 @@ export default function App() {
                   ? `Quản lý ${restoredData.length} profiles đã lưu trữ`
                   : activeTab === 'execution'
                   ? 'Quản lý chiến dịch và quy trình KOL Execution'
+                  : activeTab === 'performance'
+                  ? 'Upload Excel → Scrape View & Engagement → Download updated file'
                   : 'Cấu hình Webhook, Google Sheet và các API'
                 }
               </p>
@@ -714,6 +720,9 @@ export default function App() {
               />
             );
           })()}
+          {activeTab === 'performance' && (
+            <PerformanceTracker theme={theme} />
+          )}
           {activeTab === 'settings' && (
             <SettingsPanel 
               webhookUrl={webhookUrl} 
@@ -769,7 +778,7 @@ function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: st
 
   const parsedRapidApiKeys = parseRapidApiKeyPool(rapidApiKey);
   
-  const bookmarkletCode = `javascript:(function(){try{var url=window.location.href;var host=window.location.hostname;var isTikTok=/tiktok\\.com/i.test(host);var isFacebook=/(facebook\\.com|fb\\.com|fb\\.watch)/i.test(host);if(!isTikTok&&!isFacebook){alert('Scout Hub chỉ hỗ trợ TikTok hoặc Facebook profile!');return;}var data={url:url,scrapedAt:new Date().toISOString()};if(isTikTok){data.platform='TikTok';var nickEl=document.querySelector('[data-e2e="user-title"]')||document.querySelector('h1');data.nickname=nickEl?nickEl.textContent.trim():'';var subEl=document.querySelector('[data-e2e="user-subtitle"]')||document.querySelector('h2');if(subEl){data.channelId=subEl.textContent.trim().replace(/^@/,'');}else{var match=url.match(/@([^/?#]+)/);data.channelId=match?match[1]:'';}var followersEl=document.querySelector('[data-e2e="followers-count"]');data.followers=followersEl?followersEl.textContent.trim():'';var followingEl=document.querySelector('[data-e2e="following-count"]');data.following=followingEl?followingEl.textContent.trim():'';var likesEl=document.querySelector('[data-e2e="likes-count"]');data.likes=likesEl?likesEl.textContent.trim():'';var bioEl=document.querySelector('[data-e2e="user-desc"]');data.bio=bioEl?bioEl.textContent.trim():'';var imgEl=document.querySelector('[class*="Avatar"] img')||document.querySelector('img[src*="avatar"]');data.profilePic=imgEl?imgEl.src:'';var linkEl=document.querySelector('[data-e2e="user-link"] a')||document.querySelector('[data-e2e="user-link"]');data.bioLink=linkEl?linkEl.textContent.trim()||linkEl.href:'';}else if(isFacebook){data.platform='Facebook';var h1El=document.querySelector('h1');data.nickname=h1El?h1El.textContent.trim():'';var foundFollowers='';var bodyText=document.body.innerText;var pattern=/(\\d[\\d,.]*\\s*(?:triệu|nghìn|ngàn|[KkMm])?)\\s*(?:người theo dõi|followers|thành viên|members|lượt thích|likes)/i;var match=bodyText.match(pattern);if(match&&match[1]){foundFollowers=match[1].trim();}else{var els=document.querySelectorAll('a[href*="followers"],span');for(var i=0;i<els.length;i++){var text=els[i].textContent||'';if(/followers|người theo dõi|likes|thành viên/i.test(text)){var m=text.match(/[\\d,.]+\\s*[KkMm]?/);if(m){foundFollowers=m[0].trim();break;}}}}data.followers=foundFollowers;var spans=document.querySelectorAll('span');var introEl=document.querySelector('div[class*="x193iq5w"]')||document.querySelector('span[class*="x193iq5w"]');if(!introEl){for(var i=0;i<spans.length;i++){if(spans[i].textContent.includes('Giới thiệu')||spans[i].textContent.includes('Intro')){introEl=spans[i];break;}}}data.bio=introEl?introEl.textContent.trim():'';var avatarImg=document.querySelector('svg[role="img"] image')||document.querySelector('g image')||document.querySelector('img[src*="profile"]');data.profilePic=avatarImg?(avatarImg.getAttribute('xlink:href')||avatarImg.src):'';}var textToScan=[data.nickname,data.bio,document.body.innerText].join(' ');var emailMatch=textToScan.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);data.email=emailMatch?emailMatch[0]:'';var phoneMatch=textToScan.match(/(?:\\+84|0)(?:\\s*\\d){9,10}/);data.phone=phoneMatch?phoneMatch[0].replace(/\\s+/g,''):'';var jsonStr=JSON.stringify(data);var base64=btoa(encodeURIComponent(jsonStr).replace(/%([0-9A-F]{2})/g,function(match,p1){return String.fromCharCode(parseInt(p1,16));}));var target='${hostOrigin}/?addProfileData='+encodeURIComponent(base64);var win=window.open(target,'_blank');if(win){win.focus();}else{window.location.href=target;}}catch(err){alert('Lỗi trích xuất: '+err.message);}})();`;
+  const bookmarkletCode = `javascript:(function(){try{var url=window.location.href;var host=window.location.hostname;var isTikTok=/tiktok\\.com/i.test(host);var isFacebook=/(facebook\\.com|fb\\.com|fb\\.watch)/i.test(host);if(!isTikTok&&!isFacebook){alert('Scout Hub chỉ hỗ trợ TikTok hoặc Facebook profile!');return;}var data={url:url,scrapedAt:new Date().toISOString()};if(isTikTok){data.platform='TikTok';var nickEl=document.querySelector('[data-e2e="user-title"]')||document.querySelector('h1');data.nickname=nickEl?nickEl.textContent.trim():'';var subEl=document.querySelector('[data-e2e="user-subtitle"]')||document.querySelector('h2');if(subEl){data.channelId=subEl.textContent.trim().replace(/^@/,'');}else{var match=url.match(/@([^/?#]+)/);data.channelId=match?match[1]:'';}var followersEl=document.querySelector('[data-e2e="followers-count"]');data.followers=followersEl?followersEl.textContent.trim():'';var followingEl=document.querySelector('[data-e2e="following-count"]');data.following=followingEl?followingEl.textContent.trim():'';var likesEl=document.querySelector('[data-e2e="likes-count"]');data.likes=likesEl?likesEl.textContent.trim():'';var bioEl=document.querySelector('[data-e2e="user-desc"]');data.bio=bioEl?bioEl.textContent.trim():'';var ogImg=document.querySelector('meta[property="og:image"]');var imgEl=document.querySelector('[class*="Avatar"] img')||document.querySelector('img[src*="avatar"]');data.profilePic=ogImg?ogImg.content:(imgEl?imgEl.src:'');var scriptEl=document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');if(scriptEl){try{var rehyData=JSON.parse(scriptEl.textContent);var userInfo=rehyData?.__DEFAULT_SCOPE__?.['webapp.user-detail']?.userInfo;if(userInfo&&userInfo.user){data.profilePic=userInfo.user.avatarLarger||userInfo.user.avatarMedium||userInfo.user.avatarThumb||data.profilePic;}}catch(e){}}var linkEl=document.querySelector('[data-e2e="user-link"] a')||document.querySelector('[data-e2e="user-link"]');data.bioLink=linkEl?linkEl.textContent.trim()||linkEl.href:'';}else if(isFacebook){data.platform='Facebook';var h1El=document.querySelector('h1');data.nickname=h1El?h1El.textContent.trim():'';var foundFollowers='';var bodyText=document.body.innerText;var pattern=/(\\d[\\d,.]*\\s*(?:triệu|nghìn|ngàn|[KkMm])?)\\s*(?:người theo dõi|followers|thành viên|members|lượt thích|likes)/i;var match=bodyText.match(pattern);if(match&&match[1]){foundFollowers=match[1].trim();}else{var els=document.querySelectorAll('a[href*="followers"],span');for(var i=0;i<els.length;i++){var text=els[i].textContent||'';if(/followers|người theo dõi|likes|thành viên/i.test(text)){var m=text.match(/[\\d,.]+\\s*[KkMm]?/);if(m){foundFollowers=m[0].trim();break;}}}}data.followers=foundFollowers;var spans=document.querySelectorAll('span');var introEl=document.querySelector('div[class*="x193iq5w"]')||document.querySelector('span[class*="x193iq5w"]');if(!introEl){for(var i=0;i<spans.length;i++){if(spans[i].textContent.includes('Giới thiệu')||spans[i].textContent.includes('Intro')){introEl=spans[i];break;}}}data.bio=introEl?introEl.textContent.trim():'';var fbOgImg=document.querySelector('meta[property="og:image"]');var avatarImg=document.querySelector('svg[role="img"] image')||document.querySelector('g image')||document.querySelector('img[src*="profile"]');data.profilePic=fbOgImg?fbOgImg.content:(avatarImg?(avatarImg.getAttribute('xlink:href')||avatarImg.src):'');}var textToScan=[data.nickname,data.bio,document.body.innerText].join(' ');var emailMatch=textToScan.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);data.email=emailMatch?emailMatch[0]:'';var phoneMatch=textToScan.match(/(?:\\+84|0)(?:\\s*\\d){9,10}/);data.phone=phoneMatch?phoneMatch[0].replace(/\\s+/g,''):'';var jsonStr=JSON.stringify(data);var base64=btoa(encodeURIComponent(jsonStr).replace(/%([0-9A-F]{2})/g,function(match,p1){return String.fromCharCode(parseInt(p1,16));}));var target='${hostOrigin}/?addProfileData='+encodeURIComponent(base64);var win=window.open(target,'_blank');if(win){win.focus();}else{window.location.href=target;}}catch(err){alert('Lỗi trích xuất: '+err.message);}})();`;
 
   const handleSave = () => {
     const normalizedRapidApiKeys = parsedRapidApiKeys.join('\n');

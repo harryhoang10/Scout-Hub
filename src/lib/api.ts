@@ -22,11 +22,24 @@ export async function fetchFromSheet(webhookUrl: string): Promise<RestoredData[]
  */
 export async function upsertToSheet(webhookUrl: string, profiles: RestoredData[]): Promise<boolean> {
   if (!webhookUrl || profiles.length === 0) return false;
+  
+  // Transform profilePic to proxy URLs before sending to Google Sheets
+  const processedProfiles = profiles.map(p => {
+    if (p.profilePic && !p.profilePic.includes('/api/proxy-image/')) {
+      const host = typeof window !== 'undefined' ? window.location.origin : '';
+      return {
+        ...p,
+        profilePic: `${host}/api/proxy-image/avatar.jpg?url=${encodeURIComponent(p.profilePic)}`
+      };
+    }
+    return p;
+  });
+
   try {
     const res = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // Prevent CORS preflight issues with typical fetch
-      body: JSON.stringify({ action: 'upsert', profiles })
+      body: JSON.stringify({ action: 'upsert', profiles: processedProfiles })
     });
     return res.ok;
   } catch (error) {

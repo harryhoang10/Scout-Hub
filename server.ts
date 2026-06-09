@@ -42,6 +42,7 @@ async function getStealthBrowser() {
     stealthBrowser = await puppeteerInstance.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      protocolTimeout: 60000,
     });
   }
 
@@ -105,7 +106,28 @@ function normalizeCacheUrl(url: string) {
 
 function cleanAvatarUrl(url: string): string {
   if (!url) return '';
-  return url.trim();
+  let cleaned = url.trim();
+  
+  // Extract original URL if it is already wrapped in our proxy URL
+  if (cleaned.includes('/api/proxy-image/')) {
+    try {
+      const parsed = new URL(cleaned);
+      const rawUrl = parsed.searchParams.get('url');
+      if (rawUrl) {
+        cleaned = rawUrl;
+      }
+    } catch (e) {}
+  }
+  
+  if (cleaned.includes('tiktokcdn.com')) {
+    // 1. Rewrite low-res shrink WebP path parameter to high-res cropcenter JPEG
+    cleaned = cleaned.replace(/~tplv-tiktok-shrink:[^?]+\.webp/g, '~tplv-tiktokx-cropcenter:1080:1080.jpeg');
+    
+    // 2. Fallback: replace any other .webp extension in path with .jpeg
+    cleaned = cleaned.replace(/\.webp($|\?)/g, '.jpeg$1');
+  }
+  
+  return cleaned;
 }
 
 function createScrapeCacheKey(platform: 'tiktok' | 'facebook', url: string, variant = 'default') {
@@ -712,6 +734,9 @@ app.use(express.json({ limit: '10mb' }));
           await page.close();
 
           const $ = cheerio.load(html);
+          let parsedSuccessfully = false;
+          let payload: any = null;
+
           const scriptContent = $('#__UNIVERSAL_DATA_FOR_REHYDRATION__').html();
           if (scriptContent) {
             try {
@@ -729,14 +754,14 @@ app.use(express.json({ limit: '10mb' }));
                   text: bio,
                   source: user.phone || user.bioEmail || user.bioLink?.link ? 'fallback' : (aiResult.phone || aiResult.email || aiResult.bioLink ? 'ai' : 'fallback'),
                 });
-                const payload = {
+                payload = {
                   bio,
                   channelId: user.uniqueId || '',
                   channelLink: `https://www.tiktok.com/@${user.uniqueId}`,
                   following: stats.followingCount || 0,
                   followers: stats.followerCount || 0,
                   likes: stats.heartCount || 0,
-                  profilePic: cleanAvatarUrl(user.avatarLarger || user.avatarMedium || ''),
+                  profilePic: cleanAvatarUrl(user.avatarLarger || user.avatarMedium || $('meta[property="og:image"]').attr('content') || ''),
                   nickname: user.nickname || '',
                   bioLink: contact.bioLink,
                   email: contact.email,
@@ -750,12 +775,57 @@ app.use(express.json({ limit: '10mb' }));
                   cacheHit: false,
                   scrapedAt: new Date().toISOString(),
                 };
-                setCachedScrape(cacheKey, payload);
-                return res.json(payload);
+                parsedSuccessfully = true;
               }
             } catch (e) {
               console.error("Puppeteer parse error:", e);
             }
+          }
+
+          // Meta-tag fallback if JSON script is missing or invalid
+          if (!parsedSuccessfully) {
+            const nickname = $('meta[property="og:title"]').attr('content') || $('title').text().replace(/\|.*/, '').trim() || '';
+            const bio = $('meta[name="description"]').attr('content') || $('meta[property="og:description"]').attr('content') || '';
+            const profilePic = $('meta[property="og:image"]').attr('content') || $('meta[property="twitter:image"]').attr('content') || '';
+            
+            if (nickname || profilePic) {
+              const aiResult = await runAIAnalysisServerSide(bio);
+              const contact = normalizeContact({
+                phone: aiResult.phone,
+                email: aiResult.email,
+                bioLink: aiResult.bioLink,
+                text: bio,
+                source: aiResult.phone || aiResult.email || aiResult.bioLink ? 'ai' : 'fallback',
+              });
+              
+              payload = {
+                bio,
+                channelId: username,
+                channelLink: fetchUrl,
+                following: 0,
+                followers: 0,
+                likes: 0,
+                profilePic: cleanAvatarUrl(profilePic),
+                nickname,
+                bioLink: contact.bioLink,
+                email: contact.email,
+                phone: contact.phone,
+                contactSource: contact.contactSource,
+                contactWarnings: contact.contactWarnings,
+                ...emptyMetrics,
+                rapidApiMode: 'fallback',
+                partialWarnings: ['Dữ liệu lấy bằng fallback (meta-tag) nên thiếu một số chỉ số.'],
+                aiAnalysis: aiResult.aiAnalysis,
+                cacheHit: false,
+                scrapedAt: new Date().toISOString(),
+              };
+              parsedSuccessfully = true;
+            }
+          }
+
+          if (parsedSuccessfully && payload) {
+            setCachedScrape(cacheKey, payload);
+            return res.json(payload);
           }
         } catch (puppeteerErr: any) {
           console.error("Puppeteer fallback error:", puppeteerErr.message);
@@ -1007,6 +1077,475 @@ app.use(express.json({ limit: '10mb' }));
     } catch (error: any) {
       console.error("Webhook GET error:", error.message);
       return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ============ Performance Tracking — Batch Post Scraper ============
+  // Helper: detect platform from URL
+  function detectPlatform(url: string): 'tiktok' | 'facebook' | 'instagram' | 'unknown' {
+    if (/tiktok\.com|vt\.tiktok/i.test(url)) return 'tiktok';
+    if (/facebook\.com|fb\.com|fb\.watch/i.test(url)) return 'facebook';
+    if (/instagram\.com/i.test(url)) return 'instagram';
+    return 'unknown';
+  }
+
+  // Helper: setup page interception to block heavy assets
+  async function setupFastPage(page: any) {
+    await page.setRequestInterception(true);
+    page.on('request', (req: any) => {
+      const type = req.resourceType();
+      if (['image', 'stylesheet', 'font', 'media'].includes(type)) {
+        req.abort();
+      } else {
+        req.continue();
+      }
+    });
+  }
+
+  // Helper: scrape a single TikTok video post
+  async function scrapeTikTokPost(url: string): Promise<{ view: number; engagement: number; details: any }> {
+    const browser = await getStealthBrowser();
+    const page = await browser.newPage();
+    try {
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+      await setupFastPage(page);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      
+      // Wait a short moment first
+      await new Promise(r => setTimeout(r, 800));
+
+      let hydrationData = await page.evaluate(() => {
+        const script = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
+        return script ? script.textContent : null;
+      });
+
+      if (!hydrationData) {
+        // Fallback: wait more
+        await new Promise(r => setTimeout(r, 2200));
+        hydrationData = await page.evaluate(() => {
+          const script = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
+          return script ? script.textContent : null;
+        });
+      }
+
+      if (hydrationData) {
+        const parsed = JSON.parse(hydrationData);
+        const defaultScope = parsed.__DEFAULT_SCOPE__;
+        if (defaultScope && defaultScope['webapp.video-detail']) {
+          const itemInfo = defaultScope['webapp.video-detail'].itemInfo;
+          if (itemInfo && itemInfo.itemStruct && itemInfo.itemStruct.stats) {
+            const stats = itemInfo.itemStruct.stats;
+            const playCount = Number(stats.playCount) || 0;
+            const diggCount = Number(stats.diggCount) || 0;
+            const commentCount = Number(stats.commentCount) || 0;
+            const shareCount = Number(stats.shareCount) || 0;
+            const collectCount = Number(stats.collectCount) || 0;
+            return {
+              view: playCount,
+              engagement: diggCount + commentCount + shareCount + collectCount,
+              details: { likes: diggCount, comments: commentCount, shares: shareCount, saves: collectCount }
+            };
+          }
+        }
+      }
+      throw new Error('Could not extract TikTok video stats');
+    } finally {
+      await page.close();
+    }
+  }
+
+  // Helper: scrape a single Facebook post
+  async function scrapeFacebookPost(url: string): Promise<{ view: number; engagement: number; details: any }> {
+    const browser = await getStealthBrowser();
+    const page = await browser.newPage();
+    try {
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+      await setupFastPage(page);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await new Promise(r => setTimeout(r, 1000));
+
+      let html = await page.content();
+
+      const getStats = (htmlStr: string) => {
+        const reactionMatch = htmlStr.match(/"reaction_count"\s*:\s*\{\s*"count"\s*:\s*(\d+)/);
+        const commentMatch = htmlStr.match(/"comments"\s*:\s*\{\s*"total_count"\s*:\s*(\d+)/);
+        const shareMatch = htmlStr.match(/"share_count"\s*:\s*\{\s*"count"\s*:\s*(\d+)/);
+
+        let reactions = reactionMatch ? parseInt(reactionMatch[1]) : 0;
+        let comments = commentMatch ? parseInt(commentMatch[1]) : 0;
+        let shares = shareMatch ? parseInt(shareMatch[1]) : 0;
+        return { reactions, comments, shares };
+      };
+
+      let stats = getStats(html);
+
+      if (stats.reactions === 0 && stats.comments === 0 && stats.shares === 0) {
+        // Fallback: wait more
+        await new Promise(r => setTimeout(r, 3000));
+        html = await page.content();
+        stats = getStats(html);
+      }
+
+      // Method 2: Fallback to visible text if JSON fails
+      if (stats.reactions === 0 && stats.comments === 0 && stats.shares === 0) {
+        const textContent = await page.evaluate(() => document.body.innerText);
+        const reactionsTextMatch = textContent.match(/Reactions:\s*([\d.KkMm]+)\s*Likes?,\s*(\d+)\s*Comments?,\s*(\d+)\s*Shares?/i);
+        if (reactionsTextMatch) {
+          const parseShortNum = (s: string) => {
+            const lower = s.toLowerCase();
+            if (lower.includes('k')) return parseFloat(lower) * 1000;
+            if (lower.includes('m')) return parseFloat(lower) * 1000000;
+            return parseFloat(s.replace(/,/g, ''));
+          };
+          stats.reactions = parseShortNum(reactionsTextMatch[1]) || 0;
+          stats.comments = parseInt(reactionsTextMatch[2]) || 0;
+          stats.shares = parseInt(reactionsTextMatch[3]) || 0;
+        } else {
+          const commentsText = textContent.match(/(\d+)\s*comments?/i);
+          const sharesText = textContent.match(/(\d+)\s*shares?/i);
+          const allReactionsText = textContent.match(/All reactions:\s*([\d.KkMm]+)/i);
+          if (allReactionsText) {
+            const parseShortNum = (s: string) => {
+              const lower = s.toLowerCase();
+              if (lower.includes('k')) return parseFloat(lower) * 1000;
+              if (lower.includes('m')) return parseFloat(lower) * 1000000;
+              return parseFloat(s.replace(/,/g, ''));
+            };
+            stats.reactions = parseShortNum(allReactionsText[1]) || 0;
+          }
+          if (commentsText) stats.comments = parseInt(commentsText[1]) || 0;
+          if (sharesText) stats.shares = parseInt(sharesText[1]) || 0;
+        }
+      }
+
+      let views = 0;
+      const getFacebookVideoId = (targetUrl: string) => {
+        try {
+          const urlObj = new URL(targetUrl);
+          const pathParts = urlObj.pathname.split('/').filter(Boolean);
+          for (let i = pathParts.length - 1; i >= 0; i--) {
+            if (/^\d+$/.test(pathParts[i])) {
+              return pathParts[i];
+            }
+          }
+          return urlObj.searchParams.get('v') || '';
+        } catch (e) {
+          return '';
+        }
+      };
+
+      const videoId = getFacebookVideoId(page.url()) || getFacebookVideoId(url);
+      if (videoId) {
+        const idPattern = new RegExp(`"id"\\s*:\\s*"${videoId}"`, 'g');
+        let match;
+        while ((match = idPattern.exec(html)) !== null) {
+          const startIdx = match.index;
+          const chunk = html.slice(Math.max(0, startIdx - 1000), startIdx + 4000);
+          
+          const playMatch = chunk.match(/"play_count"\s*:\s*(\d+)/);
+          if (playMatch) {
+            views = parseInt(playMatch[1], 10);
+            break;
+          }
+          
+          const viewMatch = chunk.match(/"video_view_count"\s*:\s*(\d+)/);
+          if (viewMatch) {
+            views = parseInt(viewMatch[1], 10);
+            break;
+          }
+        }
+      }
+
+      if (!views) {
+        const playMatch = html.match(/"play_count"\s*:\s*(\d+)/);
+        if (playMatch) {
+          views = parseInt(playMatch[1], 10);
+        } else {
+          const viewMatch = html.match(/"video_view_count"\s*:\s*(\d+)/);
+          if (viewMatch) {
+            views = parseInt(viewMatch[1], 10);
+          }
+        }
+      }
+
+      if (!views) {
+        const textContent = await page.evaluate(() => document.body.innerText);
+        const viewsTextMatch = textContent.match(/([\d.,KkMm]+)\s*(?:views|lượt xem)/i);
+        if (viewsTextMatch) {
+          const parseShortNum = (s: string) => {
+            const lower = s.toLowerCase();
+            if (lower.includes('k')) return parseFloat(lower) * 1000;
+            if (lower.includes('m')) return parseFloat(lower) * 1000000;
+            return parseFloat(s.replace(/,/g, ''));
+          };
+          views = Math.round(parseShortNum(viewsTextMatch[1])) || 0;
+        }
+      }
+
+      return {
+        view: views,
+        engagement: stats.reactions + stats.comments + stats.shares,
+        details: { reactions: stats.reactions, comments: stats.comments, shares: stats.shares }
+      };
+    } finally {
+      await page.close();
+    }
+  }
+
+  // Helper: scrape a single Instagram post/reel
+  async function scrapeInstagramPost(url: string): Promise<{ view: number; engagement: number; details: any }> {
+    const browser = await getStealthBrowser();
+    const page = await browser.newPage();
+    try {
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+      await setupFastPage(page);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await new Promise(r => setTimeout(r, 1000));
+
+      let html = await page.content();
+
+      const getStats = (htmlStr: string) => {
+        const likeCountMatch = htmlStr.match(/"like_count"\s*:\s*(\d+)/);
+        const commentCountMatch = htmlStr.match(/"comment_count"\s*:\s*(\d+)/);
+        const viewCountMatch = htmlStr.match(/"view_count"\s*:\s*(\d+)/) || htmlStr.match(/"play_count"\s*:\s*(\d+)/);
+        const likes = likeCountMatch ? parseInt(likeCountMatch[1]) : 0;
+        const comments = commentCountMatch ? parseInt(commentCountMatch[1]) : 0;
+        const views = viewCountMatch ? parseInt(viewCountMatch[1]) : 0;
+        return { likes, comments, views };
+      };
+
+      let stats = getStats(html);
+
+      if (stats.likes === 0 && stats.comments === 0) {
+        await new Promise(r => setTimeout(r, 3000));
+        html = await page.content();
+        stats = getStats(html);
+      }
+
+      let views = stats.views;
+      if (!views) {
+        const textContent = await page.evaluate(() => document.body.innerText);
+        const viewsTextMatch = textContent.match(/([\d.,KkMm]+)\s*(?:views|lượt xem|plays|lượt phát)/i);
+        if (viewsTextMatch) {
+          const parseShortNum = (s: string) => {
+            const lower = s.toLowerCase();
+            if (lower.includes('k')) return parseFloat(lower) * 1000;
+            if (lower.includes('m')) return parseFloat(lower) * 1000000;
+            return parseFloat(s.replace(/,/g, ''));
+          };
+          views = Math.round(parseShortNum(viewsTextMatch[1])) || 0;
+        }
+      }
+
+      return {
+        view: views,
+        engagement: stats.likes + stats.comments,
+        details: { likes: stats.likes, comments: stats.comments }
+      };
+    } finally {
+      await page.close();
+    }
+  }
+
+  // Helper: scrape link mapping
+  async function scrapeLink(link: { row: number; url: string; platform?: string }) {
+    const url = link.url.trim();
+    const platform = link.platform || detectPlatform(url);
+    try {
+      let result;
+      switch (platform) {
+        case 'tiktok':
+          result = await scrapeTikTokPost(url);
+          break;
+        case 'facebook':
+          result = await scrapeFacebookPost(url);
+          break;
+        case 'instagram':
+          result = await scrapeInstagramPost(url);
+          break;
+        default:
+          return { row: link.row, url, view: null, engagement: null, details: null, status: 'error', error: `Unsupported platform: ${platform}` };
+      }
+      console.log(`✓ Scraped ${platform} post [row ${link.row}]: view=${result.view}, engagement=${result.engagement}`);
+      return { row: link.row, url, ...result, platform, status: 'ok' };
+    } catch (error: any) {
+      console.error(`✗ Failed to scrape [row ${link.row}] ${url}:`, error.message);
+      return { row: link.row, url, view: null, engagement: null, details: null, platform, status: 'error', error: error.message };
+    }
+  }
+
+  // ============ Performance Tracking — Google Sheets Proxy ============
+  app.post('/api/import-gsheet', async (req, res) => {
+    try {
+      const { url } = req.body;
+      if (!url) return res.status(400).json({ error: 'Google Sheet URL is required' });
+
+      let exportUrl = '';
+      if (url.includes('/spreadsheets/d/e/')) {
+        const matchPub = url.match(/\/spreadsheets\/d\/e\/([a-zA-Z0-9-_]+)/);
+        if (!matchPub) {
+          return res.status(400).json({ error: 'Đường dẫn Google Sheets xuất bản không hợp lệ. Định dạng mẫu: /spreadsheets/d/e/PUB_ID/pub' });
+        }
+        const pubId = matchPub[1];
+        exportUrl = `https://docs.google.com/spreadsheets/d/e/${pubId}/pub?output=xlsx`;
+      } else {
+        const matchNormal = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+        if (!matchNormal) {
+          return res.status(400).json({ error: 'Đường dẫn Google Sheets không hợp lệ. Cần có cấu trúc /spreadsheets/d/ID/' });
+        }
+        const sheetId = matchNormal[1];
+        exportUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=xlsx`;
+      }
+
+      const response = await fetch(exportUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Không thể tải Google Sheet. Hãy chắc chắn link đã được chia sẻ "Bất kỳ ai có liên kết đều có thể xem"`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      return res.send(buffer);
+    } catch (error: any) {
+      console.error("GSheet import error:", error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ============ Performance Tracking — Batch Post Scraper ============
+  app.post('/api/scrape-post', async (req, res) => {
+    try {
+      const { links } = req.body;
+      if (!links || !Array.isArray(links) || links.length === 0) {
+        return res.status(400).json({ error: 'links array is required' });
+      }
+
+      if (isServerlessRuntime) {
+        return res.status(503).json({ error: 'Post scraping requires Puppeteer which is not available in serverless mode.' });
+      }
+
+      const CONCURRENCY = 5;
+      const results: any[] = [];
+
+      // Process links in batches
+      const queue = [...links];
+      const running: Promise<void>[] = [];
+
+      while (queue.length > 0 || running.length > 0) {
+        while (running.length < CONCURRENCY && queue.length > 0) {
+          const link = queue.shift()!;
+          const promise = scrapeLink(link).then(result => {
+            results.push(result);
+            const idx = running.indexOf(promise);
+            if (idx !== -1) running.splice(idx, 1);
+          });
+          running.push(promise);
+        }
+        if (running.length > 0) {
+          await Promise.race(running);
+        }
+      }
+
+      results.sort((a, b) => a.row - b.row);
+
+      return res.json({
+        results,
+        scrapedAt: new Date().toISOString(),
+        totalLinks: links.length,
+        successCount: results.filter(r => r.status === 'ok').length,
+        errorCount: results.filter(r => r.status === 'error').length
+      });
+    } catch (error: any) {
+      console.error("Scrape-post error:", error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ============ Performance Tracking — Stream Post Scraper ============
+  app.post('/api/scrape-post-stream', async (req, res) => {
+    try {
+      const { links } = req.body;
+      if (!links || !Array.isArray(links) || links.length === 0) {
+        return res.status(400).json({ error: 'links array is required' });
+      }
+
+      if (isServerlessRuntime) {
+        return res.status(503).json({ error: 'Post scraping requires Puppeteer which is not available in serverless mode.' });
+      }
+
+      // Set headers for streaming NDJSON
+      res.setHeader('Content-Type', 'application/x-ndjson');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      const CONCURRENCY = 5;
+      const queue = [...links];
+      const running: Promise<void>[] = [];
+
+      while (queue.length > 0 || running.length > 0) {
+        while (running.length < CONCURRENCY && queue.length > 0) {
+          const link = queue.shift()!;
+          const promise = scrapeLink(link).then(result => {
+            res.write(JSON.stringify(result) + '\n');
+            const idx = running.indexOf(promise);
+            if (idx !== -1) running.splice(idx, 1);
+          });
+          running.push(promise);
+        }
+        if (running.length > 0) {
+          await Promise.race(running);
+        }
+      }
+
+      res.end();
+    } catch (error: any) {
+      console.error("Scrape-post-stream error:", error.message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: error.message });
+      } else {
+        res.write(JSON.stringify({ status: 'error', error: error.message }) + '\n');
+        res.end();
+      }
+    }
+  });
+
+  // ============ Image Proxy Endpoint (for Google Slides/Sheets hotlink bypass) ============
+  app.get('/api/proxy-image/:filename?', async (req, res) => {
+    try {
+      const imageUrl = req.query.url as string;
+      if (!imageUrl) {
+        return res.status(400).send('Image URL is required');
+      }
+
+      const response = await fetch(imageUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Referer': 'https://www.tiktok.com/',
+        }
+      });
+
+      if (!response.ok) {
+        return res.status(response.status).send(`Failed to fetch image: ${response.statusText}`);
+      }
+
+      const contentType = response.headers.get('content-type') || 'image/jpeg';
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 1 day
+
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      return res.send(buffer);
+    } catch (error: any) {
+      console.error("Proxy image error:", error.message);
+      return res.status(500).send("Error proxying image: " + error.message);
     }
   });
 
