@@ -123,7 +123,10 @@ function cleanAvatarUrl(url: string): string {
     // 1. Rewrite low-res shrink WebP path parameter to high-res cropcenter JPEG
     cleaned = cleaned.replace(/~tplv-tiktok-shrink:[^?]+\.webp/g, '~tplv-tiktokx-cropcenter:1080:1080.jpeg');
     
-    // 2. Fallback: replace any other .webp extension in path with .jpeg
+    // 2. Catch any other ~tplv-* template with .webp extension
+    cleaned = cleaned.replace(/(~tplv-[^:]+:[^.]+)\.webp/g, '$1.jpeg');
+    
+    // 3. Fallback: replace any remaining .webp extension in path with .jpeg
     cleaned = cleaned.replace(/\.webp($|\?)/g, '.jpeg$1');
   }
   
@@ -1102,8 +1105,115 @@ app.use(express.json({ limit: '10mb' }));
     });
   }
 
+  // Helper: extract TikTok video ID from various URL formats
+  function extractTikTokVideoId(url: string): string | null {
+    // Format: https://www.tiktok.com/@user/video/1234567890
+    const videoMatch = url.match(/video\/(\d+)/);
+    if (videoMatch) return videoMatch[1];
+    // Format: https://vt.tiktok.com/XXXXXXX/ (short link — ID not directly extractable)
+    return null;
+  }
+
   // Helper: scrape a single TikTok video post
-  async function scrapeTikTokPost(url: string): Promise<{ view: number; engagement: number; details: any }> {
+  async function scrapeTikTokPost(url: string, apiKeys: string[] = []): Promise<{ view: number; engagement: number; details: any }> {
+    // 1. RapidAPI (primary — reliable, works on serverless)
+    const videoId = extractTikTokVideoId(url);
+    if (apiKeys.length > 0) {
+      const readyKeys = getRapidApiReadyKeys(apiKeys);
+      for (const keyState of readyKeys) {
+        try {
+          // Try by video_id first, fallback to video_url
+          const apiPath = videoId
+            ? `/video/info?video_id=${videoId}`
+            : `/video/info?video_url=${encodeURIComponent(url)}`;
+          const result = await requestRapidApiJson<any>(apiPath, keyState.key);
+
+          if (isRapidApiRequestFailure(result)) {
+            if (result.quotaExceeded) {
+              markRapidApiQuota(apiKeys, keyState.key, result.retryAfterMs);
+              console.warn(`[TikTok Post] RapidAPI quota exceeded for key ${maskApiKey(keyState.key)}, trying next...`);
+              continue;
+            }
+            markRapidApiFailure(apiKeys, keyState.key);
+            console.warn(`[TikTok Post] RapidAPI failed for key ${maskApiKey(keyState.key)}: ${result.error}`);
+            continue;
+          }
+
+          markRapidApiSuccess(apiKeys, keyState.key);
+
+          // Parse stats from RapidAPI response
+          const videoData = result.data?.data || result.data;
+          const stats = videoData?.stats || videoData;
+          const playCount = Number(stats?.play_count ?? stats?.playCount ?? 0);
+          const diggCount = Number(stats?.digg_count ?? stats?.diggCount ?? 0);
+          const commentCount = Number(stats?.comment_count ?? stats?.commentCount ?? 0);
+          const shareCount = Number(stats?.share_count ?? stats?.shareCount ?? 0);
+          const collectCount = Number(stats?.collect_count ?? stats?.collectCount ?? 0);
+
+          if (playCount > 0 || diggCount > 0 || commentCount > 0) {
+            console.log(`[TikTok Post] RapidAPI success: view=${playCount}, eng=${diggCount + commentCount + shareCount + collectCount}`);
+            return {
+              view: playCount,
+              engagement: diggCount + commentCount + shareCount + collectCount,
+              details: { likes: diggCount, comments: commentCount, shares: shareCount, saves: collectCount }
+            };
+          }
+          console.warn(`[TikTok Post] RapidAPI returned zero stats for key ${maskApiKey(keyState.key)}, trying next...`);
+        } catch (err: any) {
+          markRapidApiFailure(apiKeys, keyState.key);
+          console.warn(`[TikTok Post] RapidAPI crashed for key ${maskApiKey(keyState.key)}: ${err.message}`);
+        }
+      }
+      console.warn('[TikTok Post] All RapidAPI keys exhausted or returned no data, falling back to direct fetch...');
+    }
+
+    // 2. Direct fetch (fallback — may work if TikTok doesn't block)
+    try {
+      console.log(`[TikTok Scrape] Trying direct fetch: ${url}`);
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+        }
+      });
+      if (response.ok) {
+        const html = await response.text();
+        const match = html.match(/<script\s+id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+        if (match) {
+          const parsed = JSON.parse(match[1].trim());
+          const defaultScope = parsed.__DEFAULT_SCOPE__;
+          if (defaultScope && defaultScope['webapp.video-detail']) {
+            const itemInfo = defaultScope['webapp.video-detail'].itemInfo;
+            if (itemInfo && itemInfo.itemStruct && itemInfo.itemStruct.stats) {
+              const stats = itemInfo.itemStruct.stats;
+              const playCount = Number(stats.playCount) || 0;
+              const diggCount = Number(stats.diggCount) || 0;
+              const commentCount = Number(stats.commentCount) || 0;
+              const shareCount = Number(stats.shareCount) || 0;
+              const collectCount = Number(stats.collectCount) || 0;
+              console.log(`[TikTok Scrape] Successfully scraped via direct fetch: view=${playCount}, eng=${diggCount + commentCount + shareCount + collectCount}`);
+              return {
+                view: playCount,
+                engagement: diggCount + commentCount + shareCount + collectCount,
+                details: { likes: diggCount, comments: commentCount, shares: shareCount, saves: collectCount }
+              };
+            }
+          }
+        }
+      } else {
+        console.warn(`[TikTok Scrape] Direct fetch response was not ok: status=${response.status}`);
+      }
+    } catch (e: any) {
+      console.warn(`[TikTok Scrape] Direct fetch failed: ${e.message}`);
+    }
+
+    if (isServerlessRuntime) {
+      throw new Error("Không thể quét dữ liệu TikTok ở chế độ Serverless. Hãy thêm RapidAPI key trong Cài đặt để scrape post trên Netlify.");
+    }
+
+    // 3. Puppeteer fallback (local only)
+    console.log(`[TikTok Scrape] Falling back to Puppeteer: ${url}`);
     const browser = await getStealthBrowser();
     const page = await browser.newPage();
     try {
@@ -1156,6 +1266,57 @@ app.use(express.json({ limit: '10mb' }));
 
   // Helper: scrape a single Facebook post
   async function scrapeFacebookPost(url: string): Promise<{ view: number; engagement: number; details: any }> {
+    // 1. Try direct fetch first (works in serverless!)
+    try {
+      console.log(`[Facebook Scrape] Trying direct fetch: ${url}`);
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        }
+      });
+      if (response.ok) {
+        const html = await response.text();
+        
+        const reactionMatch = html.match(/"reaction_count"\s*:\s*\{\s*"count"\s*:\s*(\d+)/);
+        const commentMatch = html.match(/"comments"\s*:\s*\{\s*"total_count"\s*:\s*(\d+)/);
+        const shareMatch = html.match(/"share_count"\s*:\s*\{\s*"count"\s*:\s*(\d+)/);
+
+        let reactions = reactionMatch ? parseInt(reactionMatch[1]) : 0;
+        let comments = commentMatch ? parseInt(commentMatch[1]) : 0;
+        let shares = shareMatch ? parseInt(shareMatch[1]) : 0;
+
+        let views = 0;
+        const playMatch = html.match(/"play_count"\s*:\s*(\d+)/) || html.match(/"video_view_count"\s*:\s*(\d+)/);
+        if (playMatch) {
+          views = parseInt(playMatch[1], 10);
+        }
+
+        if (reactions > 0 || comments > 0 || shares > 0 || views > 0) {
+          console.log(`[Facebook Scrape] Successfully scraped via direct fetch: view=${views}, reactions=${reactions}, comments=${comments}, shares=${shares}`);
+          return {
+            view: views,
+            engagement: reactions + comments + shares,
+            details: { reactions, comments, shares }
+          };
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[Facebook Scrape] Direct fetch failed: ${e.message}`);
+    }
+
+    if (isServerlessRuntime) {
+      // Graceful degradation: return zeros instead of crashing the entire batch
+      console.warn(`[Facebook Scrape] Direct fetch returned no data on serverless for: ${url}`);
+      return {
+        view: 0,
+        engagement: 0,
+        details: { reactions: 0, comments: 0, shares: 0, note: 'Facebook direct fetch không lấy được dữ liệu trên serverless. Thử chạy local server.' }
+      };
+    }
+
+    // 2. Fallback to Puppeteer
+    console.log(`[Facebook Scrape] Falling back to Puppeteer: ${url}`);
     const browser = await getStealthBrowser();
     const page = await browser.newPage();
     try {
@@ -1294,6 +1455,68 @@ app.use(express.json({ limit: '10mb' }));
 
   // Helper: scrape a single Instagram post/reel
   async function scrapeInstagramPost(url: string): Promise<{ view: number; engagement: number; details: any }> {
+    // 1. Try direct fetch first (works in serverless!)
+    try {
+      console.log(`[Instagram Scrape] Trying direct fetch: ${url}`);
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        }
+      });
+      if (response.ok) {
+        const html = await response.text();
+        
+        let likeCountMatch = html.match(/"like_count"\s*:\s*(\d+)/) || html.match(/"edge_media_preview_like"\s*:\s*\{\s*"count"\s*:\s*(\d+)/);
+        let commentCountMatch = html.match(/"comment_count"\s*:\s*(\d+)/) || html.match(/"edge_media_to_parent_comment"\s*:\s*\{\s*"count"\s*:\s*(\d+)/);
+        let viewCountMatch = html.match(/"view_count"\s*:\s*(\d+)/) || html.match(/"play_count"\s*:\s*(\d+)/) || html.match(/"video_view_count"\s*:\s*(\d+)/);
+
+        let likes = likeCountMatch ? parseInt(likeCountMatch[1]) : 0;
+        let comments = commentCountMatch ? parseInt(commentCountMatch[1]) : 0;
+        let views = viewCountMatch ? parseInt(viewCountMatch[1]) : 0;
+
+        if (likes === 0 && comments === 0) {
+          const $ = cheerio.load(html);
+          const desc = $('meta[name="description"]').attr('content') || $('meta[property="og:description"]').attr('content') || '';
+          if (desc) {
+            const likeMatch = desc.match(/([\d.,KkMm]+)\s*(?:likes|lượt thích)/i);
+            const commMatch = desc.match(/([\d.,KkMm]+)\s*(?:comments|bình luận)/i);
+            const parseShortNum = (s: string) => {
+              const lower = s.toLowerCase();
+              if (lower.includes('k')) return parseFloat(lower) * 1000;
+              if (lower.includes('m')) return parseFloat(lower) * 1000000;
+              return parseFloat(s.replace(/,/g, ''));
+            };
+            if (likeMatch) likes = Math.round(parseShortNum(likeMatch[1])) || 0;
+            if (commMatch) comments = Math.round(parseShortNum(commMatch[1])) || 0;
+          }
+        }
+
+        if (likes > 0 || comments > 0 || views > 0) {
+          console.log(`[Instagram Scrape] Successfully scraped via direct fetch: view=${views}, likes=${likes}, comments=${comments}`);
+          return {
+            view: views,
+            engagement: likes + comments,
+            details: { likes, comments }
+          };
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[Instagram Scrape] Direct fetch failed: ${e.message}`);
+    }
+
+    if (isServerlessRuntime) {
+      // Graceful degradation: return zeros instead of crashing the entire batch
+      console.warn(`[Instagram Scrape] Direct fetch returned no data on serverless for: ${url}`);
+      return {
+        view: 0,
+        engagement: 0,
+        details: { likes: 0, comments: 0, note: 'Instagram direct fetch không lấy được dữ liệu trên serverless. Thử chạy local server.' }
+      };
+    }
+
+    // 2. Fallback to Puppeteer
+    console.log(`[Instagram Scrape] Falling back to Puppeteer: ${url}`);
     const browser = await getStealthBrowser();
     const page = await browser.newPage();
     try {
@@ -1348,14 +1571,14 @@ app.use(express.json({ limit: '10mb' }));
   }
 
   // Helper: scrape link mapping
-  async function scrapeLink(link: { row: number; url: string; platform?: string }) {
+  async function scrapeLink(link: { row: number; url: string; platform?: string }, apiKeys: string[] = []) {
     const url = link.url.trim();
     const platform = link.platform || detectPlatform(url);
     try {
       let result;
       switch (platform) {
         case 'tiktok':
-          result = await scrapeTikTokPost(url);
+          result = await scrapeTikTokPost(url, apiKeys);
           break;
         case 'facebook':
           result = await scrapeFacebookPost(url);
@@ -1426,9 +1649,11 @@ app.use(express.json({ limit: '10mb' }));
         return res.status(400).json({ error: 'links array is required' });
       }
 
-      if (isServerlessRuntime) {
-        return res.status(503).json({ error: 'Post scraping requires Puppeteer which is not available in serverless mode.' });
-      }
+      // Resolve API keys from request header or env
+      const headerRapidApiKeys = req.headers['x-rapidapi-key'];
+      const postApiKeys = parseRapidApiKeys(
+        Array.isArray(headerRapidApiKeys) ? headerRapidApiKeys : headerRapidApiKeys || process.env.RAPIDAPI_KEY,
+      );
 
       const CONCURRENCY = 5;
       const results: any[] = [];
@@ -1440,7 +1665,7 @@ app.use(express.json({ limit: '10mb' }));
       while (queue.length > 0 || running.length > 0) {
         while (running.length < CONCURRENCY && queue.length > 0) {
           const link = queue.shift()!;
-          const promise = scrapeLink(link).then(result => {
+          const promise = scrapeLink(link, postApiKeys).then(result => {
             results.push(result);
             const idx = running.indexOf(promise);
             if (idx !== -1) running.splice(idx, 1);
@@ -1475,9 +1700,11 @@ app.use(express.json({ limit: '10mb' }));
         return res.status(400).json({ error: 'links array is required' });
       }
 
-      if (isServerlessRuntime) {
-        return res.status(503).json({ error: 'Post scraping requires Puppeteer which is not available in serverless mode.' });
-      }
+      // Resolve API keys from request header or env
+      const headerRapidApiKeys = req.headers['x-rapidapi-key'];
+      const streamApiKeys = parseRapidApiKeys(
+        Array.isArray(headerRapidApiKeys) ? headerRapidApiKeys : headerRapidApiKeys || process.env.RAPIDAPI_KEY,
+      );
 
       // Set headers for streaming NDJSON
       res.setHeader('Content-Type', 'application/x-ndjson');
@@ -1491,7 +1718,7 @@ app.use(express.json({ limit: '10mb' }));
       while (queue.length > 0 || running.length > 0) {
         while (running.length < CONCURRENCY && queue.length > 0) {
           const link = queue.shift()!;
-          const promise = scrapeLink(link).then(result => {
+          const promise = scrapeLink(link, streamApiKeys).then(result => {
             res.write(JSON.stringify(result) + '\n');
             const idx = running.indexOf(promise);
             if (idx !== -1) running.splice(idx, 1);
@@ -1516,6 +1743,8 @@ app.use(express.json({ limit: '10mb' }));
   });
 
   // ============ Image Proxy Endpoint (for Google Slides/Sheets hotlink bypass) ============
+  // Google Slides only supports PNG, JPEG, GIF via "Insert > Image > By URL".
+  // TikTok CDN often serves WebP by default → we force JPEG and set proper headers.
   app.get('/api/proxy-image/:filename?', async (req, res) => {
     try {
       const imageUrl = req.query.url as string;
@@ -1523,10 +1752,17 @@ app.use(express.json({ limit: '10mb' }));
         return res.status(400).send('Image URL is required');
       }
 
-      const response = await fetch(imageUrl, {
+      // Pre-process URL: ensure we request JPEG variant from TikTok CDN
+      let fetchImageUrl = imageUrl;
+      if (fetchImageUrl.includes('tiktokcdn.com')) {
+        fetchImageUrl = fetchImageUrl.replace(/~tplv-tiktok-shrink:[^?]+\.webp/g, '~tplv-tiktokx-cropcenter:1080:1080.jpeg');
+        fetchImageUrl = fetchImageUrl.replace(/\.webp($|\?)/g, '.jpeg$1');
+      }
+
+      const response = await fetch(fetchImageUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+          'Accept': 'image/jpeg, image/png;q=0.9, image/*;q=0.5',  // Prefer JPEG — avoid WebP
           'Accept-Language': 'en-US,en;q=0.9',
           'Referer': 'https://www.tiktok.com/',
         }
@@ -1536,9 +1772,21 @@ app.use(express.json({ limit: '10mb' }));
         return res.status(response.status).send(`Failed to fetch image: ${response.statusText}`);
       }
 
-      const contentType = response.headers.get('content-type') || 'image/jpeg';
+      // Force JPEG content type for Google Slides/Sheets compatibility
+      // Even if CDN returned WebP, Google Slides needs to see image/jpeg
+      const upstreamType = response.headers.get('content-type') || '';
+      const isJpegLike = upstreamType.includes('jpeg') || upstreamType.includes('jpg');
+      const isPng = upstreamType.includes('png');
+      const isGif = upstreamType.includes('gif');
+      // Preserve PNG/GIF if that's what CDN sent (Google Slides supports those).
+      // For everything else (WebP, AVIF, unknown) → label as JPEG.
+      const contentType = isPng ? 'image/png' : isGif ? 'image/gif' : 'image/jpeg';
+
       res.setHeader('Content-Type', contentType);
-      res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 1 day
+      res.setHeader('Cache-Control', 'public, max-age=604800'); // 7 days
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
       const arrayBuffer = await response.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
@@ -1547,6 +1795,15 @@ app.use(express.json({ limit: '10mb' }));
       console.error("Proxy image error:", error.message);
       return res.status(500).send("Error proxying image: " + error.message);
     }
+  });
+
+  // Handle CORS preflight for proxy-image
+  app.options('/api/proxy-image/:filename?', (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Max-Age', '86400');
+    return res.status(204).end();
   });
 
   if (process.env.NODE_ENV !== "production") {

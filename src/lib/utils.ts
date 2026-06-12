@@ -24,7 +24,10 @@ export function cleanAvatarUrl(url: string): string {
     // 1. Rewrite low-res shrink WebP path parameter to high-res cropcenter JPEG
     cleaned = cleaned.replace(/~tplv-tiktok-shrink:[^?]+\.webp/g, '~tplv-tiktokx-cropcenter:1080:1080.jpeg');
     
-    // 2. Fallback: replace any other .webp extension in path with .jpeg
+    // 2. Catch any other ~tplv-* template with .webp extension
+    cleaned = cleaned.replace(/(~tplv-[^:]+:[^.]+)\.webp/g, '$1.jpeg');
+    
+    // 3. Fallback: replace any remaining .webp extension in path with .jpeg
     cleaned = cleaned.replace(/\.webp($|\?)/g, '.jpeg$1');
   }
   
