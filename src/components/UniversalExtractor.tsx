@@ -6,6 +6,7 @@ import { upsertToSheet } from '../lib/api';
 import { normalizeContact } from '../lib/contactParser';
 import { GoogleGenAI } from "@google/genai";
 import { showToast } from './ui/Toast';
+import { parseMetricValue } from '../lib/utils';
 
 
 interface UniversalExtractorProps {
@@ -237,33 +238,7 @@ function isUsableValue(value: string | number | undefined): boolean {
   return Boolean(normalized) && !['n/a', 'na', '-', 'none', 'null', 'undefined'].includes(normalized);
 }
 
-function parseMetricValue(value: string | number | undefined): number {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-  if (!value) return 0;
-
-  const raw = String(value).trim().toLowerCase().replace(/\s+/g, '');
-  if (!raw || raw === 'n/a' || raw === '-') return 0;
-
-  let multiplier = 1;
-  if (raw.includes('triệu') || raw.endsWith('m')) multiplier = 1_000_000;
-  else if (raw.includes('nghìn') || raw.includes('ngàn') || raw.endsWith('k')) multiplier = 1_000;
-
-  const numericText = raw.replace(/[^0-9.,]/g, '');
-  if (!numericText) return 0;
-
-  let normalized = numericText;
-  if (numericText.includes(',') && numericText.includes('.')) {
-    normalized = numericText.replace(/,/g, '');
-  } else if (numericText.includes(',') && !numericText.includes('.')) {
-    const commaParts = numericText.split(',');
-    normalized = commaParts.length === 2 && commaParts[1].length <= 2
-      ? `${commaParts[0]}.${commaParts[1]}`
-      : numericText.replace(/,/g, '');
-  }
-
-  const parsed = parseFloat(normalized);
-  return Number.isFinite(parsed) ? parsed * multiplier : 0;
-}
+// parseMetricValue is imported from '../lib/utils'
 
 function hasAnyContact(profile: ProfileData): boolean {
   return isUsableValue(profile.phone) || isUsableValue(profile.email) || isUsableValue(profile.bioLink);
@@ -381,7 +356,7 @@ export function UniversalExtractor({ onSaveToRestored, webhookUrl, theme, prefil
   const [manualInput, setManualInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [webhookStatus, setWebhookStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
-  const [fastMode, setFastMode] = useState(true);
+  const [fastMode, setFastMode] = useState(false);
   const [forceRefresh, setForceRefresh] = useState(false);
   const [batchMonitor, setBatchMonitor] = useState<BatchMonitor | null>(null);
   const [filters, setFilters] = useState<ExtractorFilters>(DEFAULT_EXTRACTOR_FILTERS);

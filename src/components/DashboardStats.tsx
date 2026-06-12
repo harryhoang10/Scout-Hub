@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { RestoredData, Platform } from '../types';
 import { Activity, AlertTriangle, BarChart3, CheckCircle2, Clock, Database, Globe, Link as LinkIcon, Mail, Phone, RefreshCw, Target, Users } from 'lucide-react';
+import { parseMetricValue } from '../lib/utils';
 
 interface DashboardStatsProps {
   data: RestoredData[];
@@ -33,29 +34,7 @@ function isUsableValue(value: string | number | undefined) {
 }
 
 function parseMetric(value: string | number | undefined) {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-  if (!value) return 0;
-
-  const raw = String(value).trim().toLowerCase().replace(/\s+/g, '');
-  if (!raw || raw === 'n/a' || raw === '-') return 0;
-
-  let multiplier = 1;
-  if (raw.includes('triệu') || raw.endsWith('m')) multiplier = 1_000_000;
-  else if (raw.includes('nghìn') || raw.includes('ngàn') || raw.endsWith('k')) multiplier = 1_000;
-
-  const numericText = raw.replace(/[^0-9.,]/g, '');
-  if (!numericText) return 0;
-
-  let normalized = numericText;
-  if (numericText.includes(',') && numericText.includes('.')) {
-    normalized = numericText.replace(/,/g, '');
-  } else if (numericText.includes(',') && !numericText.includes('.')) {
-    const parts = numericText.split(',');
-    normalized = parts.length === 2 && parts[1].length <= 2 ? `${parts[0]}.${parts[1]}` : numericText.replace(/,/g, '');
-  }
-
-  const parsed = parseFloat(normalized);
-  return Number.isFinite(parsed) ? parsed * multiplier : 0;
+  return parseMetricValue(value);
 }
 
 function parseProfileDate(value: string | undefined) {

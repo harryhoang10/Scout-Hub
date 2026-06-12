@@ -13,7 +13,7 @@ import { ProfileDrawer } from './ProfileDrawer';
 import { mergeProfileBatch } from '../lib/profileChangeDetection';
 import { classifyProfile, findDuplicateGroups, mergeDuplicateGroup } from '../lib/profileIntelligence';
 import { showToast } from './ui/Toast';
-import { cleanAvatarUrl } from '../lib/utils';
+import { cleanAvatarUrl, parseMetricValue } from '../lib/utils';
 
 // Lazy load large modals
 const OutreachComposer = React.lazy(() => import('./OutreachComposer').then(m => ({ default: m.OutreachComposer })));
@@ -410,8 +410,8 @@ export function ScoutCRM({
           nickname: row['Tên'] || row.nickname || '',
           channelId: row['ID'] || row.channelId || '',
           followers: row['Followers'] || row.followers || '',
-          averageView: Number(row['Avg View'] || row.averageView) || 0,
-          averageEngagement: Number(row['Avg Engagement'] || row.averageEngagement) || 0,
+          averageView: parseMetricValue(row['Avg View'] || row.averageView),
+          averageEngagement: parseMetricValue(row['Avg Engagement'] || row.averageEngagement),
           phone: row['SĐT'] || row.phone || '',
           email: row['Email'] || row.email || '',
           bioLink: row['Link Bio'] || row.bioLink || '',
@@ -461,8 +461,8 @@ export function ScoutCRM({
           nickname: row['Tên'] || row['nickname'] || row['Name'] || '',
           channelId: row['ID'] || row['channelId'] || '',
           followers: row['Followers'] || row['followers'] || row['Followers / Members'] || '',
-          averageView: Number(row['Avg View'] || row['averageView']) || 0,
-          averageEngagement: Number(row['Avg Engagement'] || row['averageEngagement']) || 0,
+          averageView: parseMetricValue(row['Avg View'] || row['averageView']),
+          averageEngagement: parseMetricValue(row['Avg Engagement'] || row['averageEngagement']),
           phone: row['SĐT'] || row['phone'] || '',
           email: row['Email'] || row['email'] || '',
           bioLink: row['Link Bio'] || row['bioLink'] || '',
@@ -814,13 +814,7 @@ export function ScoutCRM({
   };
 
   const parseNumberForSort = (val: string | number | undefined) => {
-    if (!val) return 0;
-    if (typeof val === 'number') return val;
-    let s = val.toString().toLowerCase().trim();
-    let mul = 1;
-    if (s.includes('m') || s.includes('triệu')) mul = 1e6;
-    else if (s.includes('k') || s.includes('nghìn') || s.includes('ngàn')) mul = 1e3;
-    return parseFloat(s.replace(/[^0-9.,]/g, '').replace(',', '.')) * mul || 0;
+    return parseMetricValue(val);
   };
 
   const filteredAndSortedData = useMemo(() => {

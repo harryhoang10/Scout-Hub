@@ -1,4 +1,5 @@
 import { ProfileChangeRecord, ProfileFieldChange, RestoredData, Tier } from '../types';
+import { parseMetricValue } from './utils';
 
 type ChangeSource = ProfileChangeRecord['source'];
 
@@ -66,28 +67,7 @@ function normalizeEmpty(value: unknown) {
 }
 
 function parseMetric(value: unknown) {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-
-  const raw = normalizeEmpty(value).toLowerCase().replace(/\s+/g, '');
-  if (!raw) return 0;
-
-  let multiplier = 1;
-  if (raw.includes('triệu') || raw.endsWith('m')) multiplier = 1_000_000;
-  else if (raw.includes('nghìn') || raw.includes('ngàn') || raw.endsWith('k')) multiplier = 1_000;
-
-  const numericText = raw.replace(/[^0-9.,]/g, '');
-  if (!numericText) return 0;
-
-  let normalized = numericText;
-  if (numericText.includes(',') && numericText.includes('.')) {
-    normalized = numericText.replace(/,/g, '');
-  } else if (numericText.includes(',') && !numericText.includes('.')) {
-    const parts = numericText.split(',');
-    normalized = parts.length === 2 && parts[1].length <= 2 ? `${parts[0]}.${parts[1]}` : numericText.replace(/,/g, '');
-  }
-
-  const parsed = parseFloat(normalized);
-  return Number.isFinite(parsed) ? parsed * multiplier : 0;
+  return parseMetricValue(value as string | number | undefined);
 }
 
 function valuesMatch(oldValue: unknown, newValue: unknown, metric = false) {
@@ -129,8 +109,8 @@ export function hydrateRestoredProfile(profile: Partial<RestoredData>): Restored
     contactWarnings: toArray(profile.contactWarnings),
     platform: profile.platform || 'TikTok',
     profileType: profile.profileType || 'Individual',
-    averageView: Number(profile.averageView) || 0,
-    averageEngagement: Number(profile.averageEngagement) || 0,
+    averageView: parseMetricValue(profile.averageView),
+    averageEngagement: parseMetricValue(profile.averageEngagement),
     totalLikes: profile.totalLikes,
     totalComments: profile.totalComments,
     totalShares: profile.totalShares,
