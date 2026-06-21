@@ -331,14 +331,16 @@ function formatFollowers(val: string | number | undefined): string {
 function roundView(val: number | undefined): number {
   if (!val) return 0;
   if (val >= 10000) return Math.round(val / 5000) * 5000;
-  return Math.round(val / 1000) * 1000;
+  if (val >= 1000) return Math.round(val / 1000) * 1000;
+  if (val >= 100) return Math.round(val / 100) * 100;
+  return Math.round(val / 10) * 10 || 10;
 }
 
 function roundEngagement(val: number | undefined): number {
   if (!val) return 0;
-  if (val < 200) return 0;
-  const rounded = Math.round(val / 500) * 500;
-  return rounded === 0 ? 500 : rounded;
+  if (val >= 1000) return Math.round(val / 500) * 500;
+  if (val >= 100) return Math.round(val / 100) * 100;
+  return Math.round(val / 5) * 5 || 5;
 }
 
 function formatView(val: number | undefined): string {

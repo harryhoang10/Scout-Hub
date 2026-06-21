@@ -1122,10 +1122,7 @@ app.use(express.json({ limit: '10mb' }));
       const readyKeys = getRapidApiReadyKeys(apiKeys);
       for (const keyState of readyKeys) {
         try {
-          // Try by video_id first, fallback to video_url
-          const apiPath = videoId
-            ? `/video/info?video_id=${videoId}`
-            : `/video/info?video_url=${encodeURIComponent(url)}`;
+          const apiPath = `/?url=${encodeURIComponent(url)}`;
           const result = await requestRapidApiJson<any>(apiPath, keyState.key);
 
           if (isRapidApiRequestFailure(result)) {

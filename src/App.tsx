@@ -799,8 +799,9 @@ function SettingsPanel({ webhookUrl, onSaveWebhookUrl, theme }: { webhookUrl: st
     try {
       const response = await fetch(url.trim(), {
         method: 'POST',
+        redirect: 'follow',
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'text/plain;charset=utf-8',
         },
         body: JSON.stringify({
           action: 'test_connection',
@@ -846,6 +847,12 @@ function doPost(e) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   var data = JSON.parse(e.postData.contents);
   var action = data.action || 'upsert';
+  
+  if (action === 'test_connection') {
+    return ContentService.createTextOutput(JSON.stringify({ status: 'ok', message: 'ScoutHub connected successfully!' })).setMimeType(ContentService.MimeType.JSON);
+  }
+  
+  setupSheet();
   
   var existingData = sheet.getDataRange().getValues();
   var headers = existingData[0] || COLUMNS;
@@ -1401,7 +1408,7 @@ function doGet(e) {
                     Hãy làm theo các bước sau để đăng ký:
                   </p>
                   <ul className="list-disc pl-5 space-y-1.5 text-slate-400 mt-1">
-                    <li>Nhập từ khóa <b>"TikTok Scraper"</b> vào thanh tìm kiếm trên RapidAPI (hoặc truy cập trực tiếp link: <a href="https://rapidapi.com/social-api-t/api/tiktok-scraper7" target="_blank" rel="noreferrer" className="text-emerald-400 hover:underline">tiktok-scraper7 API</a>).</li>
+                    <li>Nhập từ khóa <b>"TikTok Scraper"</b> vào thanh tìm kiếm trên RapidAPI (hoặc truy cập trực tiếp link: <a href="https://rapidapi.com/tikwm-tikwm-default/api/tiktok-scraper7" target="_blank" rel="noreferrer" className="text-emerald-400 hover:underline">tiktok-scraper7 API</a>).</li>
                     <li>Bấm vào tab <b>Pricing</b> (Bảng giá).</li>
                     <li>Tìm gói <b>BASIC / FREE</b> (Thường có giá <b>$0/tháng</b>, hỗ trợ cào miễn phí hàng trăm lượt mỗi ngày) và nhấp chọn <b>Subscribe</b>.</li>
                   </ul>

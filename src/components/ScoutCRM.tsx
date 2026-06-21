@@ -494,8 +494,10 @@ export function ScoutCRM({
 
   const roundMetric = (val: number | undefined): number => {
     if (!val) return 0;
-    if (val < 1000) return Math.round(val / 100) * 100;
-    return Math.round(val / 1000) * 1000;
+    if (val >= 10000) return Math.round(val / 5000) * 5000;
+    if (val >= 1000) return Math.round(val / 1000) * 1000;
+    if (val >= 100) return Math.round(val / 100) * 100;
+    return Math.round(val / 10) * 10 || 10;
   };
 
   const formatNum = (val: number | undefined): string => {

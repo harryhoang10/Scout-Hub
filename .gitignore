@@ -21,3 +21,4 @@ test_puppeteer.js
 tiktok_profile.png
 *.skill
 outputs/
+scratch/
